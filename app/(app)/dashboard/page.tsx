@@ -23,7 +23,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { useUser } from "@/lib/user-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -43,6 +43,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+
+interface Property {
+  id: number;
+  propertyName: string;
+  propertyType: string;
+  price: string;
+  currency: string;
+  interval: string;
+  location: string;
+  rooms: string;
+  bathrooms: string;
+  kitchens: string;
+  dinings: string;
+  livings: string;
+  bikeParking: string;
+  carParking: string;
+  services: string[];
+  description: string;
+}
 
 // Mock data for amount to receive (as landlord)
 const amountToReceive = {
@@ -142,7 +161,18 @@ export default function DashboardPage() {
   const [selectedFilterPay, setSelectedFilterPay] = useState<string | null>(null);
   const [addPropertyOpen, setAddPropertyOpen] = useState(false);
   const [connectPropertyOpen, setConnectPropertyOpen] = useState(false);
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const [images, setImages] = useState([{ file: null as File | null, label: '' }]);
+  const [propertyType, setPropertyType] = useState<string>('');
+  const [interval, setInterval] = useState<string>('monthly');
+  const [currency, setCurrency] = useState<string>('USD');
+  const [properties, setProperties] = useState<Property[]>([]);
+
+  useEffect(() => {
+    const props = JSON.parse(localStorage.getItem('properties') || '[]');
+    setProperties(props);
+  }, []);
 
   const addImage = () => {
     setImages([...images, { file: null, label: '' }]);
@@ -158,6 +188,72 @@ export default function DashboardPage() {
     setImages(images.filter((_, i) => i !== index));
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+
+    const propertyName = formData.get('propertyName') as string;
+    const propertyType = formData.get('propertyType') as string;
+    const price = formData.get('price') as string;
+    const currency = formData.get('currency') as string;
+    const interval = formData.get('interval') as string;
+    const location = formData.get('location') as string;
+    const rooms = formData.get('rooms') as string;
+    const bathrooms = formData.get('bathrooms') as string;
+    const kitchens = formData.get('kitchens') as string;
+    const dinings = formData.get('dinings') as string;
+    const livings = formData.get('livings') as string;
+    const bikeParking = formData.get('bikeParking') as string;
+    const carParking = formData.get('carParking') as string;
+    const services = formData.getAll('services') as string[];
+    const description = formData.get('description') as string;
+
+    try {
+      const response = await fetch('/api/properties', {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (response.ok) {
+        // Success
+        setAddPropertyOpen(false);
+        setImages([{ file: null, label: '' }]);
+
+        const propertyData = {
+          id: Date.now(),
+          propertyName,
+          propertyType,
+          price,
+          currency,
+          interval,
+          location,
+          rooms,
+          bathrooms,
+          kitchens,
+          dinings,
+          livings,
+          bikeParking,
+          carParking,
+          services,
+          description,
+        };
+
+        const existing = JSON.parse(localStorage.getItem('properties') || '[]');
+        existing.push(propertyData);
+        localStorage.setItem('properties', JSON.stringify(existing));
+        setProperties(existing);
+
+        // Optionally show a success message
+      } else {
+        // Handle error
+        console.error('Failed to submit property');
+      }
+    } catch (error) {
+      console.error('Error submitting form:', error);
+    }
+  };
+
   const hasTenantsRole = connections.some((c) => c.role === "tenant");
   const hasLandlordRole = connections.some((c) => c.role === "landlord");
 
@@ -165,73 +261,35 @@ export default function DashboardPage() {
     <div className="space-y-6">
       {/* Add Property Dialog */}
       <section>
+        <Button size="lg" className="w-full h-16 text-lg font-bold justify-center" onClick={() => setAddPropertyOpen(true)}>
+          Add Your Property
+          <Plus className="h-6 w-6 ml-2" />
+        </Button>
         <Dialog open={addPropertyOpen} onOpenChange={(open) => {
           setAddPropertyOpen(open);
           if (!open) {
             setImages([{ file: null, label: '' }]);
           }
         }}>
-          <DialogTrigger asChild>
-            <Button size="lg" className="w-full h-16 text-lg font-bold justify-center">
-              Add Your Property
-              <Plus className="h-6 w-6 ml-2" />
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
             <DialogHeader>
               <DialogTitle>Add Your Property</DialogTitle>
               <DialogDescription>
                 Fill in the details to add your property to the platform.
               </DialogDescription>
             </DialogHeader>
-            <div className="space-y-4">
+            <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <Label htmlFor="property-name">Property Name</Label>
-                <Input id="property-name" placeholder="Enter property name" />
+                <Label htmlFor="property-name">Property Name *</Label>
+                <Input id="property-name" name="propertyName" placeholder="Enter property name" required />
               </div>
               <div>
-                <Label>Images</Label>
-                <div className="space-y-4">
-                  {images.map((image, index) => (
-                    <div key={index} className="flex items-end space-x-2">
-                      <div className="flex-1">
-                        <Label htmlFor={`image-${index}`}>Image {index + 1}</Label>
-                        <Input
-                          id={`image-${index}`}
-                          type="file"
-                          accept="image/*"
-                          onChange={(e) => updateImage(index, 'file', e.target.files?.[0] || null)}
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <Label htmlFor={`label-${index}`}>Label</Label>
-                        <Input
-                          id={`label-${index}`}
-                          placeholder="Image label"
-                          value={image.label}
-                          onChange={(e) => updateImage(index, 'label', e.target.value)}
-                        />
-                      </div>
-                      {images.length > 1 && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => removeImage(index)}
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                  <Button type="button" variant="outline" onClick={addImage}>
-                    Add Image
-                  </Button>
-                </div>
+                <Label htmlFor="location">Location *</Label>
+                <Input id="location" name="location" placeholder="Enter location" required />
               </div>
               <div>
-                <Label htmlFor="property-type">Property Type</Label>
-                <Select>
+                <Label htmlFor="property-type">Property Type *</Label>
+                <Select name="propertyType" value={propertyType} onValueChange={setPropertyType} required>
                   <SelectTrigger>
                     <SelectValue placeholder="Select property type" />
                   </SelectTrigger>
@@ -241,88 +299,231 @@ export default function DashboardPage() {
                     <SelectItem value="room">Room</SelectItem>
                     <SelectItem value="office">Office</SelectItem>
                     <SelectItem value="coworking">Coworking Space</SelectItem>
+                    <SelectItem value="bnb">BNB</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label htmlFor="price">Price *</Label>
+                <div className="flex gap-2">
+                  <Select name="currency" value={currency} onValueChange={setCurrency} required>
+                    <SelectTrigger className="w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="USD">NPR</SelectItem>
+                      <SelectItem value="EUR">USD</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Input id="price" name="price" type="number" min="0" step="1" placeholder="Enter price" required />
+                  <Select name="interval" value={interval} onValueChange={setInterval} required>
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {propertyType === 'bnb' ? (
+                        <SelectItem value="daily">Daily</SelectItem>
+                      ) : (
+                        <>
+                          <SelectItem value="daily">Daily</SelectItem>
+                          <SelectItem value="weekly">Weekly</SelectItem>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                          <SelectItem value="3months">3 Months</SelectItem>
+                          <SelectItem value="6months">6 Months</SelectItem>
+                          <SelectItem value="year">Year</SelectItem>
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <Label className="mb-4">Images *</Label>
+                <div className="space-y-4">
+                  {images.map((image, index) => (
+                    <div key={index} className="flex items-end space-x-2">
+                      <div className="flex-1">
+                        <Label htmlFor={`image-${index}`}>Image {index + 1}</Label>
+                        <Input
+                          id={`image-${index}`}
+                          name={`image-${index}`}
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => updateImage(index, 'file', e.target.files?.[0] || null)}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <Label htmlFor={`label-${index}`}>Label</Label>
+                        <Input
+                          id={`label-${index}`}
+                          name={`label-${index}`}
+                          placeholder="Image label"
+                          value={image.label}
+                          onChange={(e) => updateImage(index, 'label', e.target.value)}
+                        />
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => removeImage(index)}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                  <Button type="button" variant="outline" onClick={addImage}>
+                    Add Image
+                  </Button>
+                </div>
+              </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="rooms">Number of Rooms</Label>
-                  <Input id="rooms" type="number" />
+                  <Label htmlFor="rooms">Number of Rooms *</Label>
+                  <Input id="rooms" name="rooms" type="number" min="0" required />
                 </div>
                 <div>
-                  <Label htmlFor="bathrooms">Number of Bathrooms</Label>
-                  <Input id="bathrooms" type="number" />
+                  <Label htmlFor="bathrooms">Number of Bathrooms *</Label>
+                  <Input id="bathrooms" name="bathrooms" type="number" min="0" required />
                 </div>
                 <div>
-                  <Label htmlFor="kitchens">Number of Kitchens</Label>
-                  <Input id="kitchens" type="number" />
+                  <Label htmlFor="kitchens">Number of Kitchens *</Label>
+                  <Input id="kitchens" name="kitchens" type="number" min="0" required />
                 </div>
                 <div>
-                  <Label htmlFor="dinings">Number of Dining Areas</Label>
-                  <Input id="dinings" type="number" />
+                  <Label htmlFor="dinings">Number of Dining Areas *</Label>
+                  <Input id="dinings" name="dinings" type="number" min="0" required />
                 </div>
                 <div>
-                  <Label htmlFor="livings">Number of Living Areas</Label>
-                  <Input id="livings" type="number" />
+                  <Label htmlFor="livings">Number of Living Areas *</Label>
+                  <Input id="livings" name="livings" type="number" min="0" required />
                 </div>
                 <div>
                   <Label htmlFor="bike-parking">Bike Parking</Label>
-                  <Input id="bike-parking" type="number" />
+                  <Select name="bikeParking" defaultValue="no">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label htmlFor="car-parking">Car Parking</Label>
-                  <Input id="car-parking" type="number" />
+                  <Select name="carParking" defaultValue="no">
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Yes</SelectItem>
+                      <SelectItem value="no">No</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
               <div>
                 <Label>Services</Label>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="garage" />
+                    <Checkbox id="garage" name="services" value="garage" />
                     <Label htmlFor="garage">Garage</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="furnished" />
+                    <Checkbox id="furnished" name="services" value="furnished" />
                     <Label htmlFor="furnished">Furnished</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="semi-furnished" />
+                    <Checkbox id="semi-furnished" name="services" value="semi-furnished" />
                     <Label htmlFor="semi-furnished">Semi Furnished</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="no-furnished" />
+                    <Checkbox id="no-furnished" name="services" value="no-furnished" />
                     <Label htmlFor="no-furnished">No Furnished</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="balcony" />
+                    <Checkbox id="balcony" name="services" value="balcony" />
                     <Label htmlFor="balcony">Balcony</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="water-supply" />
+                    <Checkbox id="water-supply" name="services" value="water-supply" />
                     <Label htmlFor="water-supply">Water Supply</Label>
                   </div>
                   <div className="flex items-center space-x-2">
-                    <Checkbox id="ev-charging" />
+                    <Checkbox id="ev-charging" name="services" value="ev-charging" />
                     <Label htmlFor="ev-charging">EV Charging Point</Label>
                   </div>
                 </div>
               </div>
               <div>
-                <Label htmlFor="description">Room Description</Label>
-                <Textarea id="description" placeholder="Describe the rooms" />
+                <Label htmlFor="description">Room Description *</Label>
+                <Textarea id="description" name="description" placeholder="Describe the rooms" required />
               </div>
-            </div>
+            </form>
             <div className="flex justify-end space-x-2">
               <Button variant="outline" onClick={() => setAddPropertyOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={() => setAddPropertyOpen(false)}>
+              <Button onClick={() => {
+                const form = formRef.current;
+                if (!form) return;
+
+                const formData = new FormData(form);
+                const propertyName = formData.get('propertyName') as string;
+                const propertyType = formData.get('propertyType') as string;
+                const price = formData.get('price') as string;
+                const interval = formData.get('interval') as string;
+                const location = formData.get('location') as string;
+                const rooms = formData.get('rooms') as string;
+                const bathrooms = formData.get('bathrooms') as string;
+                const kitchens = formData.get('kitchens') as string;
+                const dinings = formData.get('dinings') as string;
+                const livings = formData.get('livings') as string;
+                const description = formData.get('description') as string;
+                const image0 = formData.get('image-0') as File;
+
+                if (!propertyName || !propertyType || !price || !interval || !location || !rooms || !bathrooms || !kitchens || !dinings || !livings || !description || !image0) {
+                  alert('Please fill in all required fields and upload at least one image.');
+                  return;
+                }
+
+                if (parseFloat(price) < 0 || parseInt(rooms) < 0 || parseInt(bathrooms) < 0 || parseInt(kitchens) < 0 || parseInt(dinings) < 0 || parseInt(livings) < 0) {
+                  alert('Please ensure all numeric values are non-negative.');
+                  return;
+                }
+
+                setConfirmDialogOpen(true);
+              }}>
                 Add Property
               </Button>
             </div>
           </DialogContent>
         </Dialog>
       </section>
+
+      {/* Confirmation Dialog */}
+      <Dialog open={confirmDialogOpen} onOpenChange={setConfirmDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm Add Property</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to add this property? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end space-x-2">
+            <Button variant="outline" onClick={() => setConfirmDialogOpen(false)}>
+              Deny
+            </Button>
+            <Button onClick={() => {
+              formRef.current?.requestSubmit();
+              setConfirmDialogOpen(false);
+            }}>
+              Accept
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Connect Property Dialog */}
       <section>
@@ -388,6 +589,27 @@ export default function DashboardPage() {
             BNB
             <Bed className="h-4 w-4" />
           </Button>
+        </div>
+      </section>
+
+      {/* Your Properties Section */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4">Your Properties</h2>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {properties.map((prop) => (
+            <Card key={prop.id}>
+              <CardContent className="p-4">
+                <img src="/placeholder.jpg" alt="Property" className="w-full h-32 object-cover rounded mb-2" />
+                <h3 className="font-semibold">{prop.propertyName}</h3>
+                <p className="text-sm text-muted-foreground">{prop.location}</p>
+                <p className="text-sm">{prop.description.slice(0, 100)}...</p>
+                <p className="text-sm font-medium">{prop.currency} {prop.price} per {prop.interval}</p>
+                <Link href={`/properties/${prop.id}`} className="mt-2 inline-block">
+                  <Button size="sm">View Details</Button>
+                </Link>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       </section>
 
