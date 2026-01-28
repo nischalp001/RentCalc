@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Building2,
@@ -260,6 +260,14 @@ export default function PropertiesPage() {
   const [priceFilter, setPriceFilter] = useState<string>("all");
   const [bedroomFilter, setBedroomFilter] = useState<string>("all");
   const [savedListings, setSavedListings] = useState<number[]>([]);
+  const [userProperties, setUserProperties] = useState(myProperties);
+
+  useEffect(() => {
+    const storedProperties = JSON.parse(localStorage.getItem('properties') || '[]');
+    if (storedProperties.length > 0) {
+      setUserProperties([...myProperties, ...storedProperties]);
+    }
+  }, []);
 
   const hasTenantsRole = connections.some((c) => c.role === "tenant");
   const hasLandlordRole = connections.some((c) => c.role === "landlord");
@@ -346,9 +354,9 @@ export default function PropertiesPage() {
             </div>
           </div>
 
-          {myProperties.length > 0 ? (
+          {userProperties.length > 0 ? (
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {myProperties.map((property) => (
+              {userProperties.map((property) => (
                 <Link
                   key={property.id}
                   href={`/properties/${property.id}`}
@@ -399,11 +407,11 @@ export default function PropertiesPage() {
 
                       <div className="mt-4 flex items-center gap-2 border-t border-border pt-4">
                         <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                          {property.tenant.name.charAt(0)}
+                          {property.tenant?.name?.charAt(0) || "T"}
                         </div>
                         <div className="flex-1">
                           <p className="text-sm font-medium text-foreground">
-                            {property.tenant.name}
+                            {property.tenant?.name || "Tenant"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             Tenant

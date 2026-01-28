@@ -16,6 +16,7 @@ import {
   QrCode,
   Camera,
   Upload,
+  MapPin,
 } from "lucide-react";
 import Link from "next/link";
 import { SummaryCard } from "@/components/summary-card";
@@ -53,6 +54,7 @@ interface Property {
   interval: string;
   location: string;
   rooms: string;
+  bedrooms?: number;
   bathrooms: string;
   kitchens: string;
   dinings: string;
@@ -61,6 +63,9 @@ interface Property {
   carParking: string;
   services: string[];
   description: string;
+  image?: string;
+  images?: string[];
+  rent?: string;
 }
 
 // Mock data for amount to receive (as landlord)
@@ -164,6 +169,44 @@ export default function DashboardPage() {
   const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const [images, setImages] = useState([{ file: null as File | null, label: '' }]);
+
+  // Resize image to limit stored data size and return data URL
+  const resizeImageFile = (file: File, maxWidth = 1024, maxHeight = 1024, quality = 0.7) =>
+    new Promise<string>((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let { width, height } = img;
+          const aspect = width / height;
+          if (width > maxWidth) {
+            width = maxWidth;
+            height = Math.round(maxWidth / aspect);
+          }
+          if (height > maxHeight) {
+            height = maxHeight;
+            width = Math.round(maxHeight * aspect);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('Canvas not supported');
+          ctx.drawImage(img, 0, 0, width, height);
+          const dataUrl = canvas.toDataURL('image/jpeg', quality);
+          URL.revokeObjectURL(url);
+          resolve(dataUrl);
+        } catch (err) {
+          URL.revokeObjectURL(url);
+          reject(err);
+        }
+      };
+      img.onerror = (e) => {
+        URL.revokeObjectURL(url);
+        reject(e);
+      };
+      img.src = url;
+    });
   const [propertyType, setPropertyType] = useState<string>('');
   const [interval, setInterval] = useState<string>('monthly');
   const [currency, setCurrency] = useState<string>('USD');
@@ -220,16 +263,38 @@ export default function DashboardPage() {
         setAddPropertyOpen(false);
         setImages([{ file: null, label: '' }]);
 
+        // convert any uploaded images to data URLs so they persist in localStorage
+        const imageData = await Promise.all(
+          images.map(async (img) => {
+            if (img.file) {
+              try {
+                // resize before converting to data URL to reduce storage size
+                return await resizeImageFile(img.file as File, 1024, 1024, 0.7);
+              } catch (e) {
+                return null;
+              }
+            }
+            return img.label || null;
+          })
+        );
+
+        // keep only valid images and limit count
+        const imagesFiltered = (imageData.filter(Boolean) as string[]).slice(0, 6);
+
         const propertyData = {
           id: Date.now(),
+          name: propertyName,
           propertyName,
           propertyType,
           price,
           currency,
           interval,
+          address: location,
           location,
+          city: location,
           rooms,
-          bathrooms,
+          bedrooms: parseInt(rooms),
+          bathrooms: parseInt(bathrooms),
           kitchens,
           dinings,
           livings,
@@ -237,12 +302,39 @@ export default function DashboardPage() {
           carParking,
           services,
           description,
+          image: imagesFiltered[0] || '/placeholder.jpg',
+          images: imagesFiltered,
+          status: 'active' as const,
+          rent: `$${price}`,
+          sqft: 0,
+          dueDate: '1st of every month',
+          leaseEnd: 'Dec 31, 2026',
         };
 
         const existing = JSON.parse(localStorage.getItem('properties') || '[]');
         existing.push(propertyData);
-        localStorage.setItem('properties', JSON.stringify(existing));
-        setProperties(existing);
+        try {
+          localStorage.setItem('properties', JSON.stringify(existing));
+          setProperties(existing);
+        } catch (err: any) {
+          // localStorage quota exceeded: try to save without images as fallback
+          console.warn('localStorage quota exceeded, retrying without images', err);
+          const existingNoImages = existing.map((p: any) => {
+            const clone = { ...p };
+            delete clone.images;
+            delete clone.image;
+            return clone;
+          });
+          try {
+            localStorage.setItem('properties', JSON.stringify(existingNoImages));
+            setProperties(existingNoImages);
+            // inform user
+            alert('Property saved, but images could not be stored due to localStorage limits.');
+          } catch (err2) {
+            console.error('Failed to save property to localStorage', err2);
+            alert('Failed to save property locally. Try removing large images.');
+          }
+        }
 
         // Optionally show a success message
       } else {
@@ -595,22 +687,55 @@ export default function DashboardPage() {
       {/* Your Properties Section */}
       <section>
         <h2 className="text-lg font-semibold mb-4">Your Properties</h2>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {properties.map((prop) => (
-            <Card key={prop.id}>
-              <CardContent className="p-4">
-                <img src="/placeholder.jpg" alt="Property" className="w-full h-32 object-cover rounded mb-2" />
-                <h3 className="font-semibold">{prop.propertyName}</h3>
-                <p className="text-sm text-muted-foreground">{prop.location}</p>
-                <p className="text-sm">{prop.description.slice(0, 100)}...</p>
-                <p className="text-sm font-medium">{prop.currency} {prop.price} per {prop.interval}</p>
-                <Link href={`/properties/${prop.id}`} className="mt-2 inline-block">
-                  <Button size="sm">View Details</Button>
-                </Link>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        {properties.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {properties.map((prop) => (
+              <Link key={prop.id} href={`/properties/${prop.id}`} className="group">
+                <Card className="h-full overflow-hidden transition-all hover:shadow-lg">
+                  <div className="relative h-40 w-full overflow-hidden">
+                    <img 
+                      src={prop.image || "/placeholder.jpg"} 
+                      alt={prop.propertyName} 
+                      className="h-full w-full object-cover transition-transform group-hover:scale-105" 
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-foreground/80 to-transparent p-3">
+                      <p className="text-lg font-bold text-background">
+                        {prop.rent}
+                        <span className="text-sm font-normal">/month</span>
+                      </p>
+                    </div>
+                  </div>
+                  <CardContent className="p-4">
+                    <h3 className="font-semibold text-foreground group-hover:text-primary">{prop.propertyName}</h3>
+                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <MapPin className="h-3 w-3" />
+                      {prop.location}
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-2">{prop.description?.slice(0, 80)}...</p>
+                    <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+                      {prop.bedrooms != null && prop.bedrooms > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Building2 className="h-3.5 w-3.5" />
+                          {prop.bedrooms} bed
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Building2 className="h-3.5 w-3.5" />
+                        {prop.bathrooms} bath
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="p-8 text-center">
+              <p className="text-muted-foreground">No properties added yet. Click "Add Your Property" to get started!</p>
+            </CardContent>
+          </Card>
+        )}
       </section>
 
       {/* Amount to Receive Section (As Landlord) */}

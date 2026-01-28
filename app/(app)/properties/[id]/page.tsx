@@ -1,6 +1,8 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter, useParams } from "next/navigation";
 import {
   ArrowLeft,
   Building2,
@@ -13,13 +15,34 @@ import {
   Receipt,
   Edit2,
   Lock,
+  Trash2,
+  Bed,
+  Home,
+  Coffee,
+  Bath,
 } from "lucide-react";
 import { StatusBadge, type StatusType } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselPrevious,
+  CarouselNext,
+} from "@/components/ui/carousel";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 // Mock property data - would come from params in a real app
-const propertyData = {
+const mockPropertyData = {
   id: 1,
   name: "Sunset Apartments - Unit 3B",
   address: "123 Sunset Blvd, Apt 3B, Los Angeles, CA 90028",
@@ -75,6 +98,74 @@ const linkedDocuments = [
 ];
 
 export default function PropertyDetailPage() {
+  const router = useRouter();
+  const params = useParams();
+  const propertyId = params.id as string;
+  const [propertyData, setPropertyData] = useState<any>(mockPropertyData);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    // Load property from localStorage or use mock data
+    const allProperties = JSON.parse(localStorage.getItem('properties') || '[]');
+    const foundProperty = allProperties.find((p: any) => p.id === Number(propertyId));
+    
+    if (foundProperty) {
+      // Transform stored property to match display format
+      setPropertyData({
+        id: foundProperty.id,
+        name: foundProperty.name || foundProperty.propertyName,
+        address: foundProperty.address || foundProperty.location,
+        tenant: foundProperty.tenant?.name || undefined,
+        tenantEmail: foundProperty.tenant?.email || undefined,
+        tenantPhone: foundProperty.tenant?.phone || undefined,
+        rent: foundProperty.rent || `$${foundProperty.price}`,
+        status: foundProperty.status || 'active',
+        dueDate: foundProperty.dueDate || '1st of every month',
+        leaseStart: 'Jan 1, 2025',
+        leaseEnd: foundProperty.leaseEnd || 'Dec 31, 2026',
+        securityDeposit: '$2,400',
+        image: foundProperty.image || '/placeholder.svg',
+        images: foundProperty.images || (foundProperty.image ? [foundProperty.image] : []),
+        propertyType: foundProperty.propertyType,
+        price: foundProperty.price,
+        currency: foundProperty.currency,
+        interval: foundProperty.interval,
+        rooms: foundProperty.rooms,
+        bedrooms: foundProperty.bedrooms,
+        bathrooms: foundProperty.bathrooms,
+        kitchens: foundProperty.kitchens,
+        dinings: foundProperty.dinings,
+        livings: foundProperty.livings,
+        bikeParking: foundProperty.bikeParking,
+        carParking: foundProperty.carParking,
+        services: foundProperty.services,
+        description: foundProperty.description,
+      });
+    }
+    setIsLoading(false);
+  }, [propertyId]);
+
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [showManual, setShowManual] = useState(false);
+  const [manualName, setManualName] = useState('');
+  const [manualEmail, setManualEmail] = useState('');
+  const [manualPhone, setManualPhone] = useState('');
+  const [dateJoined, setDateJoined] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
+
+  const handleDeleteProperty = () => {
+    const allProperties = JSON.parse(localStorage.getItem('properties') || '[]');
+    const filteredProperties = allProperties.filter((p: any) => p.id !== Number(propertyId));
+    localStorage.setItem('properties', JSON.stringify(filteredProperties));
+    setDeleteDialogOpen(false);
+    router.push('/properties');
+  };
+
+  if (isLoading) {
+    return <div className="p-8 text-center">Loading property...</div>;
+  }
+
   return (
     <div className="space-y-6">
       {/* Back Button */}
@@ -85,14 +176,27 @@ export default function PropertyDetailPage() {
         </Link>
       </Button>
 
-      {/* Property Header */}
-      <div className="relative h-48 overflow-hidden rounded-xl md:h-64">
-        <img
-          src={propertyData.image || "/placeholder.svg"}
-          alt={propertyData.name}
-          className="h-full w-full object-cover"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-foreground/60 to-transparent" />
+      {/* Property Header with carousel */}
+      <div className="relative overflow-hidden rounded-xl">
+        {(propertyData.images && (propertyData.images as string[]).length > 0) ? (
+          <Carousel>
+            <CarouselContent>
+              {(propertyData.images as string[]).map((src: string, i: number) => (
+                <CarouselItem key={i} className="h-48 md:h-64">
+                  <img src={src} alt={`${propertyData.name}-${i}`} className="h-48 md:h-64 w-full object-cover" />
+                </CarouselItem>
+              ))}
+            </CarouselContent>
+            <CarouselPrevious />
+            <CarouselNext />
+          </Carousel>
+        ) : (
+          <div className="h-48 md:h-64 w-full bg-muted/50">
+            <img src={propertyData.image || "/placeholder.svg"} alt={propertyData.name} className="h-48 md:h-64 w-full object-cover" />
+          </div>
+        )}
+
+        <div className="absolute inset-0 bg-gradient-to-t from-foreground/60 to-transparent pointer-events-none" />
         <div className="absolute bottom-0 left-0 right-0 p-5">
           <div className="flex items-end justify-between">
             <div>
@@ -105,10 +209,6 @@ export default function PropertyDetailPage() {
                 {propertyData.address}
               </p>
             </div>
-            <Button variant="secondary" size="sm">
-              <Edit2 className="mr-2 h-4 w-4" />
-              Edit
-            </Button>
           </div>
         </div>
       </div>
@@ -117,128 +217,169 @@ export default function PropertyDetailPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Main Content */}
         <div className="space-y-6 lg:col-span-2">
-          {/* Overview */}
+          {/* Overview - show type, bedrooms, living, kitchen, bathroom, rent */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-semibold">
-                Property Overview
-              </CardTitle>
+              <CardTitle className="text-base font-semibold">Property Overview</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg bg-muted/50 p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <DollarSign className="h-4 w-4" />
-                    <span className="text-xs">Monthly Rent</span>
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-muted/50 p-2">
+                    <Building2 className="h-5 w-5 text-muted-foreground" />
                   </div>
-                  <p className="mt-1 text-xl font-bold text-foreground">
-                    {propertyData.rent}
-                  </p>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Type</p>
+                    <p className="text-sm font-medium">{(propertyData as any).propertyType || '-'}</p>
+                  </div>
                 </div>
-                <div className="rounded-lg bg-muted/50 p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Calendar className="h-4 w-4" />
-                    <span className="text-xs">Due Date</span>
+
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-muted/50 p-2">
+                    <Bed className="h-5 w-5 text-muted-foreground" />
                   </div>
-                  <p className="mt-1 font-semibold text-foreground">
-                    {propertyData.dueDate}
-                  </p>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Bedrooms</p>
+                    <p className="text-sm font-medium">{(propertyData as any).bedrooms ?? '-'}</p>
+                  </div>
                 </div>
-                <div className="rounded-lg bg-muted/50 p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Calendar className="h-4 w-4" />
-                    <span className="text-xs">Lease End</span>
+
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-muted/50 p-2">
+                    <Home className="h-5 w-5 text-muted-foreground" />
                   </div>
-                  <p className="mt-1 font-semibold text-foreground">
-                    {propertyData.leaseEnd}
-                  </p>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Living</p>
+                    <p className="text-sm font-medium">{(propertyData as any).livings ?? '-'}</p>
+                  </div>
                 </div>
-                <div className="rounded-lg bg-muted/50 p-4">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <DollarSign className="h-4 w-4" />
-                    <span className="text-xs">Security Deposit</span>
+
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-muted/50 p-2">
+                    <Coffee className="h-5 w-5 text-muted-foreground" />
                   </div>
-                  <p className="mt-1 font-semibold text-foreground">
-                    {propertyData.securityDeposit}
-                  </p>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Kitchen</p>
+                    <p className="text-sm font-medium">{(propertyData as any).kitchens ?? '-'}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-muted/50 p-2">
+                    <Bath className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Bathrooms</p>
+                    <p className="text-sm font-medium">{(propertyData as any).bathrooms ?? '-'}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="rounded-lg bg-muted/50 p-2">
+                    <DollarSign className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Monthly Rent</p>
+                    <p className="text-sm font-medium">{propertyData.rent}</p>
+                  </div>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Recent Transactions */}
+          {/* Description section */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <CardTitle className="text-base font-semibold">
-                Recent Transactions
-              </CardTitle>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/transactions" className="text-primary">
-                  View all
-                </Link>
-              </Button>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">Description</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {recentTransactions.map((tx) => (
-                  <div
-                    key={tx.id}
-                    className="flex items-center gap-4 rounded-lg border border-border p-3"
-                  >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/10">
-                      <Lock className="h-5 w-5 text-success" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground">
-                        {tx.description}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{tx.date}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-semibold text-success">{tx.amount}</p>
-                      <StatusBadge status={tx.status} size="sm" showIcon={false} />
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <p className="text-sm text-muted-foreground">{propertyData.description || 'No description provided.'}</p>
             </CardContent>
           </Card>
 
-          {/* Linked Documents */}
+          {/* Property Details (fields from the Add Property form) */}
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <CardTitle className="text-base font-semibold">
-                Linked Documents
-              </CardTitle>
-              <Button variant="ghost" size="sm" asChild>
-                <Link href="/documents" className="text-primary">
-                  View all
-                </Link>
-              </Button>
+            <CardHeader>
+              <CardTitle className="text-base font-semibold">Property Details</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {linkedDocuments.map((doc) => (
-                  <div
-                    key={doc.id}
-                    className="flex items-center gap-4 rounded-lg border border-border p-3"
-                  >
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                      <FileText className="h-5 w-5 text-primary" />
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <Building2 className="h-5 w-5 text-muted-foreground" />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground">
-                        {doc.name}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {doc.type} · {doc.date}
-                      </p>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Type</p>
+                      <p className="text-sm font-medium">{(propertyData as any).propertyType || '-'}</p>
                     </div>
-                    <Button variant="outline" size="sm">
-                      View
-                    </Button>
                   </div>
-                ))}
+
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <Bed className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Bedrooms</p>
+                      <p className="text-sm font-medium">{(propertyData as any).bedrooms ?? '-'}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <Home className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Living Rooms</p>
+                      <p className="text-sm font-medium">{(propertyData as any).livings ?? '-'}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <Coffee className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Kitchens</p>
+                      <p className="text-sm font-medium">{(propertyData as any).kitchens ?? '-'}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <Bath className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Bathrooms</p>
+                      <p className="text-sm font-medium">{(propertyData as any).bathrooms ?? '-'}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <MapPin className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Location</p>
+                      <p className="text-sm font-medium">{propertyData.address}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-muted/50 p-2">
+                      <DollarSign className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Price</p>
+                      <p className="text-sm font-medium">{propertyData.rent}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="font-medium">Services</p>
+                    <p className="text-sm text-muted-foreground">{((propertyData as any).services || []).join(', ')}</p>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -246,47 +387,25 @@ export default function PropertyDetailPage() {
 
         {/* Sidebar */}
         <div className="space-y-6">
-          {/* Tenant Info */}
+          {/* Add Tenant / Share ID */}
           <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">
-                Tenant Information
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-lg font-semibold text-primary-foreground">
-                  {propertyData.tenant.charAt(0)}
-                </div>
-                <div>
-                  <p className="font-medium text-foreground">
-                    {propertyData.tenant}
-                  </p>
-                  <p className="text-sm text-muted-foreground">Tenant</p>
-                </div>
-              </div>
-              <div className="space-y-2 text-sm">
-                <p className="flex items-center gap-2 text-muted-foreground">
-                  <Mail className="h-4 w-4" />
-                  {propertyData.tenantEmail}
-                </p>
-                <p className="flex items-center gap-2 text-muted-foreground">
-                  <User className="h-4 w-4" />
-                  {propertyData.tenantPhone}
-                </p>
-              </div>
-              <Button variant="outline" className="w-full bg-transparent" asChild>
-                <Link href="/messages">Contact Tenant</Link>
-              </Button>
-            </CardContent>
+                <CardHeader>
+                  <CardTitle className="text-base font-semibold">Add User</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">Generate or share this property's unique ID to connect a user, or add them manually.</p>
+                  <div className="flex flex-col gap-2">
+                    <Button onClick={() => setShareDialogOpen(true)}>
+                      Add User
+                    </Button>
+                  </div>
+                </CardContent>
           </Card>
 
           {/* Quick Actions */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base font-semibold">
-                Quick Actions
-              </CardTitle>
+              <CardTitle className="text-base font-semibold">Quick Actions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               <Button className="w-full justify-start bg-transparent" variant="outline">
@@ -305,6 +424,98 @@ export default function PropertyDetailPage() {
           </Card>
         </div>
       </div>
+
+      <div className="mt-6 flex justify-end">
+        <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>Delete Property</Button>
+      </div>
+
+      {/* Share / Add Tenant Dialog */}
+      <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add User</DialogTitle>
+            <p className="text-sm text-muted-foreground">Share this ID/QR with a user or add them manually below.</p>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex flex-col items-center">
+              <img src={`https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent('property-' + propertyData.id)}`} alt="qr" />
+              <p className="mt-2 font-mono">{`property-${propertyData.id}`}</p>
+              <div className="mt-2 flex gap-2">
+                <Button onClick={() => navigator.clipboard.writeText(`property-${propertyData.id}`)}>Copy ID</Button>
+                <Button variant="outline" onClick={() => setShowManual((s) => !s)}>{showManual ? 'Hide Manual Form' : 'Add Manually'}</Button>
+              </div>
+            </div>
+
+            {showManual && (
+              <div className="space-y-3">
+                <div>
+                  <Label>Name</Label>
+                  <Input value={manualName} onChange={(e) => setManualName(e.target.value)} placeholder="Full name" />
+                </div>
+                <div>
+                  <Label>Email</Label>
+                  <Input value={manualEmail} onChange={(e) => setManualEmail(e.target.value)} placeholder="Email" />
+                </div>
+                <div>
+                  <Label>Contact Number</Label>
+                  <Input value={manualPhone} onChange={(e) => setManualPhone(e.target.value)} placeholder="Phone" />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label>Date Joined</Label>
+                    <Input type="date" value={dateJoined} onChange={(e) => setDateJoined(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Date End</Label>
+                    <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => { setShowManual(false); }}>Cancel</Button>
+                  <Button onClick={() => {
+                    // save manual user to property in localStorage
+                    const allProperties = JSON.parse(localStorage.getItem('properties') || '[]');
+                    const idx = allProperties.findIndex((p: any) => p.id === propertyData.id);
+                    if (idx !== -1) {
+                      allProperties[idx].tenant = { name: manualName || 'User', email: manualEmail || '', phone: manualPhone || '', dateJoined: dateJoined || '', dateEnd: dateEnd || '' };
+                      localStorage.setItem('properties', JSON.stringify(allProperties));
+                    }
+                    setPropertyData((prev: any) => ({ ...prev, tenant: manualName || 'User', tenantEmail: manualEmail || '', tenantPhone: manualPhone || '' }));
+                    // clear fields and close
+                    setManualName(''); setManualEmail(''); setManualPhone(''); setDateJoined(''); setDateEnd(''); setShowManual(false); setShareDialogOpen(false);
+                  }}>Save User</Button>
+                </div>
+              </div>
+            )}
+
+            {!showManual && (
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShareDialogOpen(false)}>Close</Button>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete Property</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete "{propertyData.name}"? This action cannot be undone. The property will be removed from everywhere in the app.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={handleDeleteProperty}>
+              Delete Property
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
