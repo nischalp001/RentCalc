@@ -26,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Carousel,
   CarouselContent,
@@ -142,6 +143,11 @@ export default function PropertyDetailPage() {
         services: foundProperty.services,
         description: foundProperty.description,
       });
+      
+      // Load tenant information
+      if (foundProperty.tenant) {
+        setTenant(foundProperty.tenant);
+      }
     }
     setIsLoading(false);
   }, [propertyId]);
@@ -153,6 +159,8 @@ export default function PropertyDetailPage() {
   const [manualPhone, setManualPhone] = useState('');
   const [dateJoined, setDateJoined] = useState('');
   const [dateEnd, setDateEnd] = useState('');
+  const [tenant, setTenant] = useState<any>(null);
+  const [billingTab, setBillingTab] = useState("profile");
 
   const handleDeleteProperty = () => {
     const allProperties = JSON.parse(localStorage.getItem('properties') || '[]');
@@ -297,110 +305,245 @@ export default function PropertyDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Property Details (fields from the Add Property form) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">Property Details</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3">
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-muted/50 p-2">
-                      <Building2 className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Type</p>
-                      <p className="text-sm font-medium">{(propertyData as any).propertyType || '-'}</p>
-                    </div>
-                  </div>
+          {/* Property Details and Billing Tab */}
+          <Tabs value={billingTab} onValueChange={setBillingTab} className="w-full">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="profile">Property Details</TabsTrigger>
+              <TabsTrigger value="billing">Billing Profile</TabsTrigger>
+            </TabsList>
+            
+            {/* Property Details Tab */}
+            <TabsContent value="profile" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base font-semibold">Property Details</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-muted/50 p-2">
+                          <Building2 className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Type</p>
+                          <p className="text-sm font-medium">{(propertyData as any).propertyType || '-'}</p>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-muted/50 p-2">
-                      <Bed className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Bedrooms</p>
-                      <p className="text-sm font-medium">{(propertyData as any).bedrooms ?? '-'}</p>
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-muted/50 p-2">
+                          <Bed className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Bedrooms</p>
+                          <p className="text-sm font-medium">{(propertyData as any).bedrooms ?? '-'}</p>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-muted/50 p-2">
-                      <Home className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Living Rooms</p>
-                      <p className="text-sm font-medium">{(propertyData as any).livings ?? '-'}</p>
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-muted/50 p-2">
+                          <Home className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Living Rooms</p>
+                          <p className="text-sm font-medium">{(propertyData as any).livings ?? '-'}</p>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-muted/50 p-2">
-                      <Coffee className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Kitchens</p>
-                      <p className="text-sm font-medium">{(propertyData as any).kitchens ?? '-'}</p>
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-muted/50 p-2">
+                          <Coffee className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Kitchens</p>
+                          <p className="text-sm font-medium">{(propertyData as any).kitchens ?? '-'}</p>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-muted/50 p-2">
-                      <Bath className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Bathrooms</p>
-                      <p className="text-sm font-medium">{(propertyData as any).bathrooms ?? '-'}</p>
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-muted/50 p-2">
+                          <Bath className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Bathrooms</p>
+                          <p className="text-sm font-medium">{(propertyData as any).bathrooms ?? '-'}</p>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-muted/50 p-2">
-                      <MapPin className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Location</p>
-                      <p className="text-sm font-medium">{propertyData.address}</p>
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-muted/50 p-2">
+                          <MapPin className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Location</p>
+                          <p className="text-sm font-medium">{propertyData.address}</p>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center gap-3">
-                    <div className="rounded-lg bg-muted/50 p-2">
-                      <DollarSign className="h-5 w-5 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Price</p>
-                      <p className="text-sm font-medium">{propertyData.rent}</p>
-                    </div>
-                  </div>
+                      <div className="flex items-center gap-3">
+                        <div className="rounded-lg bg-muted/50 p-2">
+                          <DollarSign className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Price</p>
+                          <p className="text-sm font-medium">{propertyData.rent}</p>
+                        </div>
+                      </div>
 
-                  <div>
-                    <p className="font-medium">Services</p>
-                    <p className="text-sm text-muted-foreground">{((propertyData as any).services || []).join(', ')}</p>
+                      <div>
+                        <p className="font-medium">Services</p>
+                        <p className="text-sm text-muted-foreground">{((propertyData as any).services || []).join(', ')}</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </TabsContent>
+            
+            {/* Billing Profile Tab */}
+            <TabsContent value="billing" className="mt-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base font-semibold">Billing Profile</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {tenant ? (
+                    <div className="space-y-4">
+                      <div className="rounded-lg bg-muted/50 p-4">
+                        <p className="text-sm text-muted-foreground mb-2">Tenant</p>
+                        <p className="font-semibold">{tenant.name}</p>
+                      </div>
+                      <div className="rounded-lg bg-muted/50 p-4">
+                        <p className="text-sm text-muted-foreground mb-2">Base Rent</p>
+                        <p className="font-semibold">{propertyData.rent}</p>
+                      </div>
+                      <div className="rounded-lg bg-muted/50 p-4">
+                        <p className="text-sm text-muted-foreground mb-2">Lease Period</p>
+                        <p className="font-semibold">{tenant.dateJoined} to {tenant.dateEnd}</p>
+                      </div>
+                      <Button className="w-full" onClick={() => {
+                        // Navigate to create bill with this property
+                        const event = new CustomEvent('createBillFromProperty', { detail: { propertyId: propertyData.id, propertyName: propertyData.name, tenant } });
+                        window.dispatchEvent(event);
+                      }}>
+                        <Receipt className="mr-2 h-4 w-4" />
+                        Create Bill
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <p className="text-muted-foreground">No tenant assigned yet. Add a tenant to create billing profiles.</p>
+                      <Button variant="outline" className="mt-4" onClick={() => setShareDialogOpen(true)}>
+                        Add Tenant
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </div>
 
         {/* Sidebar */}
         <div className="space-y-6">
-          {/* Add Tenant / Share ID */}
-          <Card>
-                <CardHeader>
-                  <CardTitle className="text-base font-semibold">Add User</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm text-muted-foreground">Generate or share this property's unique ID to connect a user, or add them manually.</p>
-                  <div className="flex flex-col gap-2">
-                    <Button onClick={() => setShareDialogOpen(true)}>
-                      Add User
-                    </Button>
+          {/* Tenant Card */}
+          {tenant ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold flex items-center gap-2">
+                  <User className="h-4 w-4" />
+                  Tenant
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2">
+                      <User className="h-4 w-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Name</p>
+                      <p className="text-sm font-medium">{tenant.name}</p>
+                    </div>
                   </div>
-                </CardContent>
-          </Card>
+                  
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2">
+                      <Mail className="h-4 w-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Email</p>
+                      <p className="text-sm font-medium">{tenant.email}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2">
+                      <User className="h-4 w-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Phone</p>
+                      <p className="text-sm font-medium">{tenant.phone}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2">
+                      <Calendar className="h-4 w-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Date Joined</p>
+                      <p className="text-sm font-medium">{tenant.dateJoined}</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    <div className="rounded-lg bg-primary/10 p-2">
+                      <Calendar className="h-4 w-4 text-primary" />
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Lease End</p>
+                      <p className="text-sm font-medium">{tenant.dateEnd}</p>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex gap-2 pt-2">
+                  <Button variant="outline" className="flex-1" size="sm" onClick={() => { setShareDialogOpen(true); setShowManual(true); }}>
+                    <Edit2 className="mr-2 h-3 w-3" />
+                    Edit
+                  </Button>
+                  <Button variant="outline" className="flex-1" size="sm" onClick={() => {
+                    const allProperties = JSON.parse(localStorage.getItem('properties') || '[]');
+                    const idx = allProperties.findIndex((p: any) => p.id === propertyData.id);
+                    if (idx !== -1) {
+                      delete allProperties[idx].tenant;
+                      localStorage.setItem('properties', JSON.stringify(allProperties));
+                    }
+                    setTenant(null);
+                  }}>
+                    <Trash2 className="mr-2 h-3 w-3" />
+                    Remove
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold">Add User</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <p className="text-sm text-muted-foreground">Generate or share this property's unique ID to connect a user, or add them manually.</p>
+                <div className="flex flex-col gap-2">
+                  <Button onClick={() => setShareDialogOpen(true)}>
+                    Add User
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Quick Actions */}
           <Card>
@@ -433,18 +576,20 @@ export default function PropertyDetailPage() {
       <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Add User</DialogTitle>
+            <DialogTitle>{tenant ? 'Edit Tenant' : 'Add Tenant'}</DialogTitle>
             <p className="text-sm text-muted-foreground">Share this ID/QR with a user or add them manually below.</p>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="flex flex-col items-center">
-              <img src={`https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent('property-' + propertyData.id)}`} alt="qr" />
-              <p className="mt-2 font-mono">{`property-${propertyData.id}`}</p>
-              <div className="mt-2 flex gap-2">
-                <Button onClick={() => navigator.clipboard.writeText(`property-${propertyData.id}`)}>Copy ID</Button>
-                <Button variant="outline" onClick={() => setShowManual((s) => !s)}>{showManual ? 'Hide Manual Form' : 'Add Manually'}</Button>
+            {!showManual && (
+              <div className="flex flex-col items-center">
+                <img src={`https://chart.googleapis.com/chart?chs=200x200&cht=qr&chl=${encodeURIComponent('property-' + propertyData.id)}`} alt="qr" />
+                <p className="mt-2 font-mono text-sm">{`property-${propertyData.id}`}</p>
+                <div className="mt-2 flex gap-2">
+                  <Button size="sm" onClick={() => navigator.clipboard.writeText(`property-${propertyData.id}`)}>Copy ID</Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowManual(true)}>Add Manually</Button>
+                </div>
               </div>
-            </div>
+            )}
 
             {showManual && (
               <div className="space-y-3">
@@ -466,24 +611,52 @@ export default function PropertyDetailPage() {
                     <Input type="date" value={dateJoined} onChange={(e) => setDateJoined(e.target.value)} />
                   </div>
                   <div>
-                    <Label>Date End</Label>
+                    <Label>Lease End</Label>
                     <Input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} />
                   </div>
                 </div>
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => { setShowManual(false); }}>Cancel</Button>
-                  <Button onClick={() => {
+                  <Button variant="outline" size="sm" onClick={() => { 
+                    setShowManual(false);
+                    // Clear only if adding new tenant
+                    if (!tenant) {
+                      setManualName(''); 
+                      setManualEmail(''); 
+                      setManualPhone(''); 
+                      setDateJoined(''); 
+                      setDateEnd('');
+                    }
+                  }}>Back</Button>
+                  <Button size="sm" onClick={() => {
                     // save manual user to property in localStorage
                     const allProperties = JSON.parse(localStorage.getItem('properties') || '[]');
                     const idx = allProperties.findIndex((p: any) => p.id === propertyData.id);
                     if (idx !== -1) {
-                      allProperties[idx].tenant = { name: manualName || 'User', email: manualEmail || '', phone: manualPhone || '', dateJoined: dateJoined || '', dateEnd: dateEnd || '' };
+                      allProperties[idx].tenant = { 
+                        name: manualName || 'Tenant', 
+                        email: manualEmail || '', 
+                        phone: manualPhone || '', 
+                        dateJoined: dateJoined || '', 
+                        dateEnd: dateEnd || '' 
+                      };
                       localStorage.setItem('properties', JSON.stringify(allProperties));
                     }
-                    setPropertyData((prev: any) => ({ ...prev, tenant: manualName || 'User', tenantEmail: manualEmail || '', tenantPhone: manualPhone || '' }));
+                    setTenant({
+                      name: manualName || 'Tenant',
+                      email: manualEmail || '',
+                      phone: manualPhone || '',
+                      dateJoined: dateJoined || '',
+                      dateEnd: dateEnd || ''
+                    });
                     // clear fields and close
-                    setManualName(''); setManualEmail(''); setManualPhone(''); setDateJoined(''); setDateEnd(''); setShowManual(false); setShareDialogOpen(false);
-                  }}>Save User</Button>
+                    setManualName(''); 
+                    setManualEmail(''); 
+                    setManualPhone(''); 
+                    setDateJoined(''); 
+                    setDateEnd(''); 
+                    setShowManual(false); 
+                    setShareDialogOpen(false);
+                  }}>Save Tenant</Button>
                 </div>
               </div>
             )}

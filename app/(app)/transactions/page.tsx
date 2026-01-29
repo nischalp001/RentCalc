@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Lock,
   Plus,
@@ -293,6 +293,8 @@ export default function TransactionsPage() {
   const [markPaidOpen, setMarkPaidOpen] = useState(false);
   const [viewReceiptOpen, setViewReceiptOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [createBillOpen, setCreateBillOpen] = useState(false);
+  const [createBillStep, setCreateBillStep] = useState(1); // 1: select property, 2: fill details
   const [selectedReceipt, setSelectedReceipt] = useState<
     (typeof tenantReceipts)[0] | (typeof myReceipts)[0] | null
   >(null);
@@ -302,9 +304,31 @@ export default function TransactionsPage() {
   const [previousWaterUnit, setPreviousWaterUnit] = useState("");
   const [currentWaterUnit, setCurrentWaterUnit] = useState("");
   const [expandedHistory, setExpandedHistory] = useState<number[]>([]);
+  
+  // Bill creation states
+  const [selectedProperty, setSelectedProperty] = useState<any>(null);
+  const [confirmedRent, setConfirmedRent] = useState("");
+  const [billMonth, setBillMonth] = useState("");
+  const [prevElectricityUnit, setPrevElectricityUnit] = useState("");
+  const [currElectricityUnit, setCurrElectricityUnit] = useState("");
+  const [electricityRate, setElectricityRate] = useState("12");
+  const [prevWaterUnit, setPrevWaterUnit] = useState("");
+  const [currWaterUnit, setCurrWaterUnit] = useState("");
+  const [waterRate, setWaterRate] = useState("5");
+  const [internetBill, setInternetBill] = useState("");
+  const [customFields, setCustomFields] = useState<Array<{ id?: number; name: string; amount: string }>>([]);
+  const [allTenantReceipts, setAllTenantReceipts] = useState<any[]>(tenantReceipts);
 
   const hasTenantsRole = connections.some((c) => c.role === "tenant");
   const hasLandlordRole = connections.some((c) => c.role === "landlord");
+
+  // Load bills from localStorage on mount
+  useEffect(() => {
+    const savedBills = JSON.parse(localStorage.getItem('tenantBills') || '[]');
+    if (savedBills.length > 0) {
+      setAllTenantReceipts([...tenantReceipts, ...savedBills]);
+    }
+  }, []);
 
   const calculateUtilityCharge = (previous: number, current: number, rate: number) => {
     return Math.max(0, (current - previous) * rate);
@@ -340,6 +364,128 @@ export default function TransactionsPage() {
     return 0;
   };
 
+  const getPropertiesWithTenants = () => {
+    if (typeof window === 'undefined') return [];
+    const allProperties = JSON.parse(localStorage.getItem('properties') || '[]');
+    return allProperties.filter((p: any) => p.tenant && p.tenant.name);
+  };
+
+  const calculateBillTotal = () => {
+    let total = parseFloat(confirmedRent) || 0;
+    
+    if (prevElectricityUnit && currElectricityUnit) {
+      total += calculateUtilityCharge(
+        parseFloat(prevElectricityUnit),
+        parseFloat(currElectricityUnit),
+        parseFloat(electricityRate) || 12
+      );
+    }
+    
+    if (prevWaterUnit && currWaterUnit) {
+      total += calculateUtilityCharge(
+        parseFloat(prevWaterUnit),
+        parseFloat(currWaterUnit),
+        parseFloat(waterRate) || 5
+      );
+    }
+    
+    if (internetBill) {
+      total += parseFloat(internetBill);
+    }
+    
+    customFields.forEach((field) => {
+      if (field.amount) {
+        total += parseFloat(field.amount);
+      }
+    });
+    
+    return total;
+  };
+
+  const handleCreateBill = async () => {
+    if (!selectedProperty || !confirmedRent || !billMonth) {
+      alert('Please fill in all required fields');
+      return;
+    }
+
+    const electricity = prevElectricityUnit && currElectricityUnit ? {
+      amount: calculateUtilityCharge(
+        parseFloat(prevElectricityUnit),
+        parseFloat(currElectricityUnit),
+        parseFloat(electricityRate) || 12
+      ),
+      previousUnit: parseFloat(prevElectricityUnit),
+      currentUnit: parseFloat(currElectricityUnit),
+      rate: parseFloat(electricityRate) || 12,
+    } : { amount: 0, previousUnit: 0, currentUnit: 0, rate: 0 };
+
+    const water = prevWaterUnit && currWaterUnit ? {
+      amount: calculateUtilityCharge(
+        parseFloat(prevWaterUnit),
+        parseFloat(currWaterUnit),
+        parseFloat(waterRate) || 5
+      ),
+      previousUnit: parseFloat(prevWaterUnit),
+      currentUnit: parseFloat(currWaterUnit),
+      rate: parseFloat(waterRate) || 5,
+    } : { amount: 0, previousUnit: 0, currentUnit: 0, rate: 0 };
+
+    const billData = {
+      id: Date.now(),
+      tenantName: selectedProperty.tenant.name,
+      tenantEmail: selectedProperty.tenant.email,
+      property: selectedProperty.name,
+      propertyId: selectedProperty.id,
+      currentMonth: billMonth,
+      breakdown: {
+        baseRent: parseFloat(confirmedRent),
+        electricity,
+        water,
+        internet: parseFloat(internetBill) || 0,
+        ...customFields.reduce((acc, field) => {
+          acc[field.name.toLowerCase().replace(/\s+/g, '_')] = parseFloat(field.amount) || 0;
+          return acc;
+        }, {} as any),
+      },
+      total: calculateBillTotal(),
+      status: 'pending' as StatusType,
+      paidDate: null,
+      paymentMethod: null,
+      proofUrl: null,
+    };
+
+    // Save to localStorage
+    const updatedReceipts = [...allTenantReceipts, billData];
+    setAllTenantReceipts(updatedReceipts);
+    localStorage.setItem('tenantBills', JSON.stringify(updatedReceipts));
+
+    // Try to call API
+    try {
+      await fetch('/api/bills', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(billData),
+      });
+    } catch (error) {
+      console.log('Bill saved locally:', billData);
+    }
+
+    // Reset and close
+    setCreateBillOpen(false);
+    setCreateBillStep(1);
+    setSelectedProperty(null);
+    setConfirmedRent("");
+    setBillMonth("");
+    setPrevElectricityUnit("");
+    setCurrElectricityUnit("");
+    setPrevWaterUnit("");
+    setCurrWaterUnit("");
+    setInternetBill("");
+    setCustomFields([]);
+    
+    alert('Bill created successfully!');
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -357,6 +503,15 @@ export default function TransactionsPage() {
             <History className="mr-2 h-4 w-4" />
             History
           </Button>
+          {hasLandlordRole && (
+            <Button onClick={() => {
+              setCreateBillStep(1);
+              setCreateBillOpen(true);
+            }}>
+              <Plus className="mr-2 h-4 w-4" />
+              Create Bill
+            </Button>
+          )}
           {hasTenantsRole && (
             <Button onClick={() => setAddChargeOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
@@ -403,7 +558,7 @@ export default function TransactionsPage() {
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {tenantReceipts.map((receipt) => (
+                {allTenantReceipts.map((receipt: any) => (
                   <Card
                     key={receipt.id}
                     className={cn(
@@ -1261,6 +1416,271 @@ export default function TransactionsPage() {
               </Card>
             ))}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Bill Dialog */}
+      <Dialog open={createBillOpen} onOpenChange={setCreateBillOpen}>
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Create Bill</DialogTitle>
+            <DialogDescription>
+              {createBillStep === 1 ? 'Select a property to create a bill for' : 'Fill in the billing details'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {createBillStep === 1 ? (
+            // Step 1: Select Property
+            <div className="space-y-4 py-4">
+              <Label htmlFor="property-select">Select Property</Label>
+              <Select value={selectedProperty?.id?.toString() || ''} onValueChange={(value) => {
+                const properties = getPropertiesWithTenants();
+                const selected = properties.find((p: any) => p.id === parseInt(value));
+                setSelectedProperty(selected);
+              }}>
+                <SelectTrigger id="property-select">
+                  <SelectValue placeholder="Choose a property" />
+                </SelectTrigger>
+                <SelectContent>
+                  {getPropertiesWithTenants().map((prop: any) => (
+                    <SelectItem key={prop.id} value={prop.id.toString()}>
+                      {prop.name} - {prop.tenant?.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {selectedProperty && (
+                <Card className="bg-muted/30">
+                  <CardContent className="pt-6">
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Property</p>
+                        <p className="font-semibold">{selectedProperty.name}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Tenant</p>
+                        <p className="font-semibold">{selectedProperty.tenant?.name}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Email</p>
+                        <p className="font-semibold">{selectedProperty.tenant?.email}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Base Rent</p>
+                        <p className="font-semibold">{selectedProperty.rent}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCreateBillOpen(false)}>
+                  Cancel
+                </Button>
+                <Button disabled={!selectedProperty} onClick={() => setCreateBillStep(2)}>
+                  Continue
+                </Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            // Step 2: Fill Bill Details
+            <div className="space-y-4 py-4">
+              {selectedProperty && (
+                <div className="rounded-lg bg-blue-50 p-3 border border-blue-200">
+                  <p className="text-sm font-semibold text-blue-900">{selectedProperty.name}</p>
+                  <p className="text-sm text-blue-700">{selectedProperty.tenant?.name}</p>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="bill-month">Billing Month</Label>
+                  <Input 
+                    id="bill-month" 
+                    type="month" 
+                    value={billMonth}
+                    onChange={(e) => setBillMonth(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirmed-rent">Confirmed Rent</Label>
+                  <Input 
+                    id="confirmed-rent" 
+                    type="number" 
+                    placeholder={selectedProperty?.rent || "0.00"}
+                    value={confirmedRent}
+                    onChange={(e) => setConfirmedRent(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Electricity Section */}
+              <div className="rounded-lg border p-4 space-y-3">
+                <p className="font-semibold flex items-center gap-2">
+                  <Zap className="h-4 w-4" />
+                  Electricity
+                </p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="prev-elec">Previous Unit</Label>
+                    <Input 
+                      id="prev-elec" 
+                      type="number" 
+                      placeholder="0"
+                      value={prevElectricityUnit}
+                      onChange={(e) => setPrevElectricityUnit(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="curr-elec">Current Unit</Label>
+                    <Input 
+                      id="curr-elec" 
+                      type="number" 
+                      placeholder="0"
+                      value={currElectricityUnit}
+                      onChange={(e) => setCurrElectricityUnit(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="elec-rate">Rate/Unit</Label>
+                    <Input 
+                      id="elec-rate" 
+                      type="number" 
+                      placeholder="12"
+                      value={electricityRate}
+                      onChange={(e) => setElectricityRate(e.target.value)}
+                    />
+                  </div>
+                </div>
+                {prevElectricityUnit && currElectricityUnit && (
+                  <p className="text-sm text-green-600 font-semibold">
+                    Amount: ${calculateUtilityCharge(parseFloat(prevElectricityUnit), parseFloat(currElectricityUnit), parseFloat(electricityRate) || 12).toFixed(2)}
+                  </p>
+                )}
+              </div>
+
+              {/* Water Section */}
+              <div className="rounded-lg border p-4 space-y-3">
+                <p className="font-semibold flex items-center gap-2">
+                  <Droplets className="h-4 w-4" />
+                  Water
+                </p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="prev-water">Previous Unit</Label>
+                    <Input 
+                      id="prev-water" 
+                      type="number" 
+                      placeholder="0"
+                      value={prevWaterUnit}
+                      onChange={(e) => setPrevWaterUnit(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="curr-water">Current Unit</Label>
+                    <Input 
+                      id="curr-water" 
+                      type="number" 
+                      placeholder="0"
+                      value={currWaterUnit}
+                      onChange={(e) => setCurrWaterUnit(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="water-rate">Rate/Unit</Label>
+                    <Input 
+                      id="water-rate" 
+                      type="number" 
+                      placeholder="5"
+                      value={waterRate}
+                      onChange={(e) => setWaterRate(e.target.value)}
+                    />
+                  </div>
+                </div>
+                {prevWaterUnit && currWaterUnit && (
+                  <p className="text-sm text-green-600 font-semibold">
+                    Amount: ${calculateUtilityCharge(parseFloat(prevWaterUnit), parseFloat(currWaterUnit), parseFloat(waterRate) || 5).toFixed(2)}
+                  </p>
+                )}
+              </div>
+
+              {/* Internet Section */}
+              <div className="space-y-2">
+                <Label htmlFor="internet">Internet Bill</Label>
+                <Input 
+                  id="internet" 
+                  type="number" 
+                  placeholder="0.00"
+                  value={internetBill}
+                  onChange={(e) => setInternetBill(e.target.value)}
+                />
+              </div>
+
+              {/* Custom Fields */}
+              <div className="space-y-3">
+                <p className="font-semibold">Additional Charges</p>
+                {customFields.map((field) => (
+                  <div key={field.id} className="flex gap-2">
+                    <Input 
+                      placeholder="Field name"
+                      value={field.name}
+                      onChange={(e) => {
+                        const updated = customFields.map(f => f.id === field.id ? { ...f, name: e.target.value } : f);
+                        setCustomFields(updated);
+                      }}
+                    />
+                    <Input 
+                      type="number"
+                      placeholder="Amount"
+                      value={field.amount}
+                      onChange={(e) => {
+                        const updated = customFields.map(f => f.id === field.id ? { ...f, amount: e.target.value } : f);
+                        setCustomFields(updated);
+                      }}
+                    />
+                    <Button 
+                      variant="outline" 
+                      size="sm"
+                      onClick={() => setCustomFields(customFields.filter(f => f.id !== field.id))}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  onClick={() => setCustomFields([...customFields, { id: Date.now() + Math.random(), name: '', amount: '' }])}
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Field
+                </Button>
+              </div>
+
+              {/* Total */}
+              <Card className="bg-primary/10 border-primary">
+                <CardContent className="pt-6">
+                  <div className="flex justify-between items-center">
+                    <p className="font-semibold">Total Bill Amount</p>
+                    <p className="text-2xl font-bold text-primary">${calculateBillTotal().toFixed(2)}</p>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => {
+                  setCreateBillStep(1);
+                }}>
+                  Back
+                </Button>
+                <Button onClick={handleCreateBill}>
+                  Create Bill
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>
