@@ -281,6 +281,9 @@ export default function DashboardPage() {
         // keep only valid images and limit count
         const imagesFiltered = (imageData.filter(Boolean) as string[]).slice(0, 6);
 
+        const bedrooms = formData.get('bedrooms') as string;
+        const sqft = formData.get('sqft') as string;
+
         const propertyData = {
           id: Date.now(),
           name: propertyName,
@@ -293,8 +296,9 @@ export default function DashboardPage() {
           location,
           city: location,
           rooms,
-          bedrooms: parseInt(rooms),
+          bedrooms: parseInt(bedrooms),
           bathrooms: parseInt(bathrooms),
+          sqft: parseInt(sqft),
           kitchens,
           dinings,
           livings,
@@ -306,7 +310,6 @@ export default function DashboardPage() {
           images: imagesFiltered,
           status: 'active' as const,
           rent: `$${price}`,
-          sqft: 0,
           dueDate: '1st of every month',
           leaseEnd: 'Dec 31, 2026',
         };
@@ -471,12 +474,20 @@ export default function DashboardPage() {
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="rooms">Number of Rooms *</Label>
-                  <Input id="rooms" name="rooms" type="number" min="0" required />
+                  <Label htmlFor="bedrooms">Number of Bedrooms *</Label>
+                  <Input id="bedrooms" name="bedrooms" type="number" min="0" required />
                 </div>
                 <div>
                   <Label htmlFor="bathrooms">Number of Bathrooms *</Label>
                   <Input id="bathrooms" name="bathrooms" type="number" min="0" required />
+                </div>
+                <div>
+                  <Label htmlFor="sqft">Square Footage (Sq. Ft.) *</Label>
+                  <Input id="sqft" name="sqft" type="number" min="0" required />
+                </div>
+                <div>
+                  <Label htmlFor="rooms">Number of Rooms *</Label>
+                  <Input id="rooms" name="rooms" type="number" min="0" required />
                 </div>
                 <div>
                   <Label htmlFor="kitchens">Number of Kitchens *</Label>
@@ -567,20 +578,22 @@ export default function DashboardPage() {
                 const price = formData.get('price') as string;
                 const interval = formData.get('interval') as string;
                 const location = formData.get('location') as string;
-                const rooms = formData.get('rooms') as string;
+                const bedrooms = formData.get('bedrooms') as string;
                 const bathrooms = formData.get('bathrooms') as string;
+                const sqft = formData.get('sqft') as string;
+                const rooms = formData.get('rooms') as string;
                 const kitchens = formData.get('kitchens') as string;
                 const dinings = formData.get('dinings') as string;
                 const livings = formData.get('livings') as string;
                 const description = formData.get('description') as string;
                 const image0 = formData.get('image-0') as File;
 
-                if (!propertyName || !propertyType || !price || !interval || !location || !rooms || !bathrooms || !kitchens || !dinings || !livings || !description || !image0) {
+                if (!propertyName || !propertyType || !price || !interval || !location || !bedrooms || !bathrooms || !sqft || !rooms || !kitchens || !dinings || !livings || !description || !image0) {
                   alert('Please fill in all required fields and upload at least one image.');
                   return;
                 }
 
-                if (parseFloat(price) < 0 || parseInt(rooms) < 0 || parseInt(bathrooms) < 0 || parseInt(kitchens) < 0 || parseInt(dinings) < 0 || parseInt(livings) < 0) {
+                if (parseFloat(price) < 0 || parseInt(bedrooms) < 0 || parseInt(bathrooms) < 0 || parseInt(sqft) < 0 || parseInt(rooms) < 0 || parseInt(kitchens) < 0 || parseInt(dinings) < 0 || parseInt(livings) < 0) {
                   alert('Please ensure all numeric values are non-negative.');
                   return;
                 }
@@ -664,78 +677,6 @@ export default function DashboardPage() {
             </div>
           </DialogContent>
         </Dialog>
-      </section>
-
-      {/* Top Action Buttons */}
-      <section>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Button size="lg" className="justify-between">
-            Rent Your Property
-            <Plus className="h-4 w-4" />
-          </Button>
-          <Button size="lg" className="justify-between">
-            Rent a Property
-            <Building2 className="h-4 w-4" />
-          </Button>
-          <Button size="lg" className="justify-between">
-            BNB
-            <Bed className="h-4 w-4" />
-          </Button>
-        </div>
-      </section>
-
-      {/* Your Properties Section */}
-      <section>
-        <h2 className="text-lg font-semibold mb-4">Your Properties</h2>
-        {properties.length > 0 ? (
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {properties.map((prop) => (
-              <Link key={prop.id} href={`/properties/${prop.id}`} className="group">
-                <Card className="h-full overflow-hidden transition-all hover:shadow-lg">
-                  <div className="relative h-40 w-full overflow-hidden">
-                    <img 
-                      src={prop.image || "/placeholder.jpg"} 
-                      alt={prop.propertyName} 
-                      className="h-full w-full object-cover transition-transform group-hover:scale-105" 
-                    />
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-foreground/80 to-transparent p-3">
-                      <p className="text-lg font-bold text-background">
-                        {prop.rent}
-                        <span className="text-sm font-normal">/month</span>
-                      </p>
-                    </div>
-                  </div>
-                  <CardContent className="p-4">
-                    <h3 className="font-semibold text-foreground group-hover:text-primary">{prop.propertyName}</h3>
-                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <MapPin className="h-3 w-3" />
-                      {prop.location}
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-2">{prop.description?.slice(0, 80)}...</p>
-                    <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
-                      {prop.bedrooms != null && prop.bedrooms > 0 && (
-                        <span className="flex items-center gap-1">
-                          <Building2 className="h-3.5 w-3.5" />
-                          {prop.bedrooms} bed
-                        </span>
-                      )}
-                      <span className="flex items-center gap-1">
-                        <Building2 className="h-3.5 w-3.5" />
-                        {prop.bathrooms} bath
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
-          </div>
-        ) : (
-          <Card>
-            <CardContent className="p-8 text-center">
-              <p className="text-muted-foreground">No properties added yet. Click "Add Your Property" to get started!</p>
-            </CardContent>
-          </Card>
-        )}
       </section>
 
       {/* Amount to Receive Section (As Landlord) */}
@@ -1092,6 +1033,60 @@ export default function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Your Properties Section */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4">Your Properties</h2>
+        {properties.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {properties.map((prop) => (
+              <Link key={prop.id} href={`/properties/${prop.id}`} className="group">
+                <Card className="h-full overflow-hidden transition-all hover:shadow-lg">
+                  <div className="relative h-40 w-full overflow-hidden">
+                    <img
+                      src={prop.image || "/placeholder.jpg"}
+                      alt={prop.propertyName}
+                      className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                    />
+                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-foreground/80 to-transparent p-3">
+                      <p className="text-lg font-bold text-background">
+                        {prop.rent}
+                        <span className="text-sm font-normal">/month</span>
+                      </p>
+                    </div>
+                  </div>
+                  <CardContent className="p-4">
+                    <h3 className="font-semibold text-foreground group-hover:text-primary">{prop.propertyName}</h3>
+                    <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                      <MapPin className="h-3 w-3" />
+                      {prop.location}
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-2">{prop.description?.slice(0, 80)}...</p>
+                    <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
+                      {prop.bedrooms != null && prop.bedrooms > 0 && (
+                        <span className="flex items-center gap-1">
+                          <Building2 className="h-3.5 w-3.5" />
+                          {prop.bedrooms} bed
+                        </span>
+                      )}
+                      <span className="flex items-center gap-1">
+                        <Building2 className="h-3.5 w-3.5" />
+                        {prop.bathrooms} bath
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <Card>
+            <CardContent className="p-8 text-center">
+              <p className="text-muted-foreground">No properties added yet. Click "Add Your Property" to get started!</p>
+            </CardContent>
+          </Card>
+        )}
+      </section>
     </div>
   );
 }

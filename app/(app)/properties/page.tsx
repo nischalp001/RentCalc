@@ -53,8 +53,8 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { formatDateWithBothCalendars } from "@/lib/date-utils";
 
-// Mock data for user's own properties (as landlord)
 const myProperties = [
   {
     id: 1,

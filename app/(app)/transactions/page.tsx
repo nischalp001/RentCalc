@@ -52,6 +52,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { DatePicker } from "@/components/date-picker";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -65,6 +66,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { formatDateWithBothCalendars } from "@/lib/date-utils";
 
 // Mock data for tenant receipts (summary for each property you own)
 const tenantReceipts = [
@@ -317,6 +319,7 @@ export default function TransactionsPage() {
   const [waterRate, setWaterRate] = useState("5");
   const [internetBill, setInternetBill] = useState("");
   const [customFields, setCustomFields] = useState<Array<{ id?: number; name: string; amount: string }>>([]);
+  const [paymentDate, setPaymentDate] = useState<Date | undefined>();
   const [allTenantReceipts, setAllTenantReceipts] = useState<any[]>(tenantReceipts);
 
   const hasTenantsRole = connections.some((c) => c.role === "tenant");
@@ -661,7 +664,7 @@ export default function TransactionsPage() {
                         <div className="flex items-center justify-between text-sm">
                           <span className="text-muted-foreground">Paid on</span>
                           <span className="font-medium text-success">
-                            {receipt.paidDate}
+                            {formatDateWithBothCalendars(receipt.paidDate).full}
                           </span>
                         </div>
                       )}
@@ -826,12 +829,12 @@ export default function TransactionsPage() {
                           <div className="flex flex-wrap items-center gap-4 text-sm">
                             <span className="flex items-center gap-1 text-muted-foreground">
                               <Calendar className="h-4 w-4" />
-                              Due: {receipt.dueDate}
+                              Due: {formatDateWithBothCalendars(receipt.dueDate).full}
                             </span>
                             {receipt.paidDate && (
                               <span className="flex items-center gap-1 text-success">
                                 <CheckCircle2 className="h-4 w-4" />
-                                Paid: {receipt.paidDate}
+                                Paid: {formatDateWithBothCalendars(receipt.paidDate).full}
                               </span>
                             )}
                             {receipt.paymentMethod && (
@@ -1271,8 +1274,12 @@ export default function TransactionsPage() {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="payment-date">Payment Date</Label>
-              <Input id="payment-date" type="date" />
+              <DatePicker
+                label="Payment Date"
+                value={paymentDate}
+                onChange={(date) => setPaymentDate(date as Date)}
+                placeholder="Select payment date"
+              />
             </div>
             <div className="space-y-2">
               <Label>Upload Proof</Label>
