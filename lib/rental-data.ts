@@ -74,10 +74,15 @@ export type BillRecord = {
   base_rent: number;
   confirmed_rent: number;
   breakdown: {
+    rentPerMonth?: number;
     baseRent?: number;
+    due?: number;
+    penalty?: number;
     electricity?: { amount?: number; previousUnit?: number; currentUnit?: number; rate?: number } | number;
     water?: { amount?: number; previousUnit?: number; currentUnit?: number; rate?: number } | number;
+    wifi?: number;
     internet?: number;
+    others?: Record<string, number>;
     [key: string]: unknown;
   };
   total: number;
@@ -126,15 +131,40 @@ type CreateBillInput = {
   tenantEmail?: string;
   currentMonth: string;
   billingInterval?: string;
+  rentPerMonth?: number;
   baseRent?: number;
   confirmedRent?: number;
+  due?: number;
+  penalty?: number;
   electricity?: { amount?: number; previousUnit?: number; currentUnit?: number; rate?: number };
   water?: { amount?: number; previousUnit?: number; currentUnit?: number; rate?: number };
+  wifi?: number;
   internet?: number;
+  others?: Record<string, unknown>;
   otherCharges?: Record<string, unknown>;
   customFields?: Array<{ name: string; amount: number }>;
   total?: number;
   status?: "pending" | "paid" | "overdue" | "verified";
+};
+
+export type BillUsageBreakdown = {
+  amount: number;
+  previousUnit: number;
+  currentUnit: number;
+  rate: number;
+};
+
+export type BillSectionSummary = {
+  rentPerMonth: number;
+  due: number;
+  penalty: number;
+  electricity: BillUsageBreakdown;
+  water: BillUsageBreakdown;
+  wifi: number;
+  others: Array<{ name: string; amount: number }>;
+  othersTotal: number;
+  computedTotal: number;
+  total: number;
 };
 
 export type CreatePropertyTenantInput = {
@@ -154,6 +184,127 @@ const descriptionMaxWords = 150;
 function toNumber(value: unknown, fallback = 0) {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function toNonNegativeNumber(value: unknown, fallback = 0) {
+  const num = toNumber(value, fallback);
+  if (!Number.isFinite(num) || num < 0) {
+    return Math.max(0, fallback);
+  }
+  return num;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function toUsageBreakdown(value: unknown): BillUsageBreakdown {
+  if (typeof value === "number") {
+    return {
+      amount: toNonNegativeNumber(value),
+      previousUnit: 0,
+      currentUnit: 0,
+      rate: 0,
+    };
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return {
+      amount: 0,
+      previousUnit: 0,
+      currentUnit: 0,
+      rate: 0,
+    };
+  }
+
+  const previousUnit = toNonNegativeNumber(record.previousUnit);
+  const currentUnit = toNonNegativeNumber(record.currentUnit);
+  const rate = toNonNegativeNumber(record.rate);
+  const computedAmount = Math.max(currentUnit - previousUnit, 0) * rate;
+
+  return {
+    amount: toNonNegativeNumber(record.amount, computedAmount),
+    previousUnit,
+    currentUnit,
+    rate,
+  };
+}
+
+function extractOtherCharges(bill: BillRecord, breakdown: Record<string, unknown>) {
+  const othersMap = new Map<string, number>();
+
+  const addCharge = (name: string, amount: unknown) => {
+    const normalizedName = name.trim();
+    if (!normalizedName) {
+      return;
+    }
+    othersMap.set(normalizedName, toNonNegativeNumber(amount));
+  };
+
+  const explicitOthers = asRecord(breakdown.others);
+  if (explicitOthers) {
+    Object.entries(explicitOthers).forEach(([name, amount]) => addCharge(name, amount));
+  }
+
+  const knownKeys = new Set([
+    "rentPerMonth",
+    "baseRent",
+    "due",
+    "penalty",
+    "billingInterval",
+    "electricity",
+    "water",
+    "wifi",
+    "internet",
+    "others",
+  ]);
+
+  Object.entries(breakdown)
+    .filter(([key, value]) => !knownKeys.has(key) && typeof value === "number")
+    .forEach(([name, amount]) => addCharge(name, amount));
+
+  (bill.bill_custom_fields || []).forEach((field) => {
+    addCharge(field.name, field.amount);
+  });
+
+  const others = Array.from(othersMap.entries()).map(([name, amount]) => ({ name, amount }));
+  const othersTotal = others.reduce((sum, charge) => sum + charge.amount, 0);
+
+  return { others, othersTotal };
+}
+
+export function getBillSectionSummary(bill: BillRecord): BillSectionSummary {
+  const breakdown = asRecord(bill.breakdown) || {};
+  const rentPerMonth = toNonNegativeNumber(
+    breakdown.rentPerMonth,
+    toNonNegativeNumber(breakdown.baseRent, toNonNegativeNumber(bill.confirmed_rent, toNonNegativeNumber(bill.base_rent)))
+  );
+  const due = toNonNegativeNumber(breakdown.due);
+  const penalty = toNonNegativeNumber(breakdown.penalty, due * 0.1);
+  const electricity = toUsageBreakdown(breakdown.electricity);
+  const water = toUsageBreakdown(breakdown.water);
+  const wifi = toNonNegativeNumber(breakdown.wifi, toNonNegativeNumber(breakdown.internet));
+  const { others, othersTotal } = extractOtherCharges(bill, breakdown);
+
+  const computedTotal = rentPerMonth + due + penalty + electricity.amount + water.amount + wifi + othersTotal;
+  const total = toNonNegativeNumber(bill.total, computedTotal);
+
+  return {
+    rentPerMonth,
+    due,
+    penalty,
+    electricity,
+    water,
+    wifi,
+    others,
+    othersTotal,
+    computedTotal,
+    total,
+  };
 }
 
 function countWords(value: string) {
@@ -182,6 +333,9 @@ function validateCreateBillInput(input: CreateBillInput) {
 
   assertNonNegativeNumber(toNumber(input.baseRent), "Base rent");
   assertNonNegativeNumber(toNumber(input.confirmedRent ?? input.baseRent), "Confirmed rent");
+  assertNonNegativeNumber(toNumber(input.due), "Due");
+  assertNonNegativeNumber(toNumber(input.penalty), "Penalty");
+  assertNonNegativeNumber(toNumber(input.wifi ?? input.internet), "Wifi");
   assertNonNegativeNumber(toNumber(input.internet), "Internet");
   assertNonNegativeNumber(toNumber(input.total), "Total");
 
@@ -524,16 +678,43 @@ export async function createBill(input: CreateBillInput) {
   validateCreateBillInput(input);
 
   const supabase = getSupabaseBrowserClient();
+  const rentPerMonth = toNumber(input.rentPerMonth ?? input.confirmedRent ?? input.baseRent);
+  const due = toNumber(input.due);
+  const penalty = toNumber(input.penalty, due * 0.1);
+  const wifi = toNumber(input.wifi ?? input.internet);
+  const electricity = input.electricity || { amount: 0, previousUnit: 0, currentUnit: 0, rate: 0 };
+  const water = input.water || { amount: 0, previousUnit: 0, currentUnit: 0, rate: 0 };
+
+  const normalizedOthers = Object.fromEntries(
+    Object.entries({ ...(input.otherCharges || {}), ...(input.others || {}) }).map(([name, amount]) => [name, toNumber(amount)])
+  );
+  (input.customFields || []).forEach((field) => {
+    normalizedOthers[field.name.trim()] = toNumber(field.amount);
+  });
+
   const breakdown = {
-    baseRent: toNumber(input.confirmedRent ?? input.baseRent),
+    rentPerMonth,
+    baseRent: rentPerMonth,
+    due,
+    penalty,
     billingInterval: input.billingInterval?.trim() || "monthly",
-    electricity: input.electricity || { amount: 0, previousUnit: 0, currentUnit: 0, rate: 0 },
-    water: input.water || { amount: 0, previousUnit: 0, currentUnit: 0, rate: 0 },
-    internet: toNumber(input.internet),
-    ...(input.otherCharges || {}),
+    electricity,
+    water,
+    wifi,
+    internet: wifi,
+    others: normalizedOthers,
   };
 
-  const total = toNumber(input.total, toNumber((breakdown as { baseRent?: number }).baseRent));
+  const total = toNumber(
+    input.total,
+    rentPerMonth +
+      due +
+      penalty +
+      toNumber(electricity.amount) +
+      toNumber(water.amount) +
+      wifi +
+      Object.values(normalizedOthers).reduce((sum, amount) => sum + toNumber(amount), 0)
+  );
 
   const { data: bill, error } = await supabase
     .from("bills")
@@ -543,8 +724,8 @@ export async function createBill(input: CreateBillInput) {
       tenant_name: input.tenantName,
       tenant_email: input.tenantEmail?.trim() || "",
       current_month: input.currentMonth,
-      base_rent: toNumber(input.baseRent),
-      confirmed_rent: toNumber(input.confirmedRent ?? input.baseRent),
+      base_rent: rentPerMonth,
+      confirmed_rent: rentPerMonth,
       breakdown,
       total,
       status: input.status || "pending",

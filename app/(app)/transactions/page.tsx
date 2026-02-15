@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Plus, Receipt, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import {
   fetchBills,
   fetchProperties,
   fetchPropertyTenants,
+  getBillSectionSummary,
   type BillRecord,
   type PropertyRecord,
   type PropertyTenantRecord,
@@ -59,6 +61,7 @@ const asNonNegative = (value: string) => {
 };
 
 export default function TransactionsPage() {
+  const searchParams = useSearchParams();
   const [bills, setBills] = useState<BillRecord[]>([]);
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
   const [propertyTenants, setPropertyTenants] = useState<PropertyTenantRecord[]>([]);
@@ -67,12 +70,14 @@ export default function TransactionsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [hasAppliedPropertyPreset, setHasAppliedPropertyPreset] = useState(false);
 
   const [propertyId, setPropertyId] = useState("");
   const [tenantName, setTenantName] = useState("");
   const [tenantEmail, setTenantEmail] = useState("");
   const [currentMonth, setCurrentMonth] = useState("");
   const [baseRent, setBaseRent] = useState("");
+  const [due, setDue] = useState("");
 
   const [electricityPreviousUnit, setElectricityPreviousUnit] = useState("");
   const [electricityCurrentUnit, setElectricityCurrentUnit] = useState("");
@@ -82,7 +87,7 @@ export default function TransactionsPage() {
   const [waterCurrentUnit, setWaterCurrentUnit] = useState("");
   const [waterRate, setWaterRate] = useState("");
 
-  const [internet, setInternet] = useState("");
+  const [wifiCharge, setWifiCharge] = useState("");
   const [otherCharges, setOtherCharges] = useState<OtherCharge[]>([]);
 
   const preventWheelChange = (event: React.WheelEvent<HTMLInputElement>) => {
@@ -141,15 +146,19 @@ export default function TransactionsPage() {
     [otherCharges]
   );
 
+  const penalty = useMemo(() => asNonNegative(due) * 0.1, [due]);
+
   const total = useMemo(() => {
     return (
       asNonNegative(baseRent) +
+      asNonNegative(due) +
+      penalty +
       electricityAmount +
       waterAmount +
-      asNonNegative(internet) +
+      asNonNegative(wifiCharge) +
       otherChargesTotal
     );
-  }, [baseRent, electricityAmount, waterAmount, internet, otherChargesTotal]);
+  }, [baseRent, due, penalty, electricityAmount, waterAmount, wifiCharge, otherChargesTotal]);
 
   const resetForm = () => {
     setPropertyId("");
@@ -158,15 +167,37 @@ export default function TransactionsPage() {
     setTenantEmail("");
     setCurrentMonth("");
     setBaseRent("");
+    setDue("");
     setElectricityPreviousUnit("");
     setElectricityCurrentUnit("");
     setElectricityRate("");
     setWaterPreviousUnit("");
     setWaterCurrentUnit("");
     setWaterRate("");
-    setInternet("");
+    setWifiCharge("");
     setOtherCharges([]);
   };
+
+  useEffect(() => {
+    if (hasAppliedPropertyPreset || properties.length === 0) {
+      return;
+    }
+
+    const presetPropertyId = searchParams.get("propertyId");
+    if (!presetPropertyId) {
+      setHasAppliedPropertyPreset(true);
+      return;
+    }
+
+    if (!properties.some((property) => String(property.id) === presetPropertyId)) {
+      setHasAppliedPropertyPreset(true);
+      return;
+    }
+
+    setPropertyId(presetPropertyId);
+    setCreateOpen(true);
+    setHasAppliedPropertyPreset(true);
+  }, [hasAppliedPropertyPreset, properties, searchParams]);
 
   useEffect(() => {
     if (!selectedProperty) {
@@ -233,7 +264,9 @@ export default function TransactionsPage() {
     }
 
     const parsedBaseRent = toNonNegativeNumber(baseRent, "Base rent", true);
-    const parsedInternet = toNonNegativeNumber(internet, "Internet");
+    const parsedDue = toNonNegativeNumber(due, "Due");
+    const parsedPenalty = parsedDue * 0.1;
+    const parsedWifi = toNonNegativeNumber(wifiCharge, "Wifi");
 
     const parsedElectricityPrevious = toNonNegativeNumber(electricityPreviousUnit, "Electricity previous unit", true);
     const parsedElectricityCurrent = toNonNegativeNumber(electricityCurrentUnit, "Electricity current unit", true);
@@ -265,8 +298,8 @@ export default function TransactionsPage() {
 
     const calculatedElectricityAmount = (parsedElectricityCurrent - parsedElectricityPrevious) * parsedElectricityRate;
     const calculatedWaterAmount = (parsedWaterCurrent - parsedWaterPrevious) * parsedWaterRate;
-    const computedTotal = parsedBaseRent + parsedInternet + calculatedElectricityAmount + calculatedWaterAmount +
-      parsedOtherCharges.reduce((sum, charge) => sum + charge.amount, 0);
+    const computedTotal = parsedBaseRent + parsedDue + parsedPenalty + parsedWifi + calculatedElectricityAmount +
+      calculatedWaterAmount + parsedOtherCharges.reduce((sum, charge) => sum + charge.amount, 0);
 
     return {
       propertyId: selectedProperty.id,
@@ -275,8 +308,11 @@ export default function TransactionsPage() {
       tenantEmail: tenantEmail.trim(),
       currentMonth: effectiveCurrentMonth.trim(),
       billingInterval: selectedProperty.interval?.trim() || "monthly",
+      rentPerMonth: parsedBaseRent,
       baseRent: parsedBaseRent,
       confirmedRent: parsedBaseRent,
+      due: parsedDue,
+      penalty: parsedPenalty,
       electricity: {
         amount: calculatedElectricityAmount,
         previousUnit: parsedElectricityPrevious,
@@ -289,7 +325,9 @@ export default function TransactionsPage() {
         currentUnit: parsedWaterCurrent,
         rate: parsedWaterRate,
       },
-      internet: parsedInternet,
+      wifi: parsedWifi,
+      internet: parsedWifi,
+      others: extraChargesMap,
       otherCharges: extraChargesMap,
       customFields: parsedOtherCharges,
       total: computedTotal,
@@ -321,6 +359,8 @@ export default function TransactionsPage() {
     setTenantEmail("");
     setCurrentMonth("");
     setBaseRent("");
+    setDue("");
+    setWifiCharge("");
   };
 
   return (
@@ -352,23 +392,55 @@ export default function TransactionsPage() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {bills.map((bill) => (
-            <Card key={bill.id}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Receipt className="h-4 w-4" />
-                  {bill.tenant_name}
-                </CardTitle>
-                <p className="text-xs text-muted-foreground">{bill.property_name}</p>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <div className="flex justify-between"><span>Date</span><span>{bill.current_month}</span></div>
-                <div className="flex justify-between"><span>Status</span><span className="capitalize">{bill.status}</span></div>
-                <div className="flex justify-between"><span>Total</span><span className="font-semibold">${Number(bill.total || 0).toFixed(2)}</span></div>
-                <div className="text-xs text-muted-foreground">Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
-              </CardContent>
-            </Card>
-          ))}
+          {bills.map((bill) => {
+            const sections = getBillSectionSummary(bill);
+            return (
+              <Card key={bill.id}>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Receipt className="h-4 w-4" />
+                    {bill.tenant_name}
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">{bill.property_name}</p>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span>Date</span><span>{bill.current_month}</span></div>
+                  <div className="flex justify-between"><span>Status</span><span className="capitalize">{bill.status}</span></div>
+                  <div className="flex justify-between"><span>Rent (per month)</span><span>${sections.rentPerMonth.toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span>Due</span><span>${sections.due.toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span>Penalty (10% of due)</span><span>${sections.penalty.toFixed(2)}</span></div>
+                  <div className="rounded-md border px-2 py-1 text-xs">
+                    <div className="flex justify-between"><span>Electricity bill</span><span>${sections.electricity.amount.toFixed(2)}</span></div>
+                    <div className="text-muted-foreground">
+                      Prev: {sections.electricity.previousUnit} | Current: {sections.electricity.currentUnit} | Rate: {sections.electricity.rate}
+                    </div>
+                  </div>
+                  <div className="rounded-md border px-2 py-1 text-xs">
+                    <div className="flex justify-between"><span>Water bill</span><span>${sections.water.amount.toFixed(2)}</span></div>
+                    <div className="text-muted-foreground">
+                      Prev: {sections.water.previousUnit} | Current: {sections.water.currentUnit} | Rate: {sections.water.rate}
+                    </div>
+                  </div>
+                  <div className="flex justify-between"><span>Wifi</span><span>${sections.wifi.toFixed(2)}</span></div>
+                  <div className="rounded-md border px-2 py-1 text-xs">
+                    <div className="flex justify-between"><span>Others</span><span>${sections.othersTotal.toFixed(2)}</span></div>
+                    {sections.others.length > 0 ? (
+                      sections.others.map((charge, index) => (
+                        <div key={`${bill.id}-${charge.name}-${index}`} className="flex justify-between text-muted-foreground">
+                          <span>{charge.name}</span>
+                          <span>${charge.amount.toFixed(2)}</span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-muted-foreground">No additional charges</div>
+                    )}
+                  </div>
+                  <div className="flex justify-between"><span>Total</span><span className="font-semibold">${sections.total.toFixed(2)}</span></div>
+                  <div className="text-xs text-muted-foreground">Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -411,13 +483,24 @@ export default function TransactionsPage() {
                 <NepaliDateInput value={currentMonth} onChange={setCurrentMonth} />
               </div>
               <div className="space-y-2">
-                <Label>Base Rent</Label>
+                <Label>Rent (per month)</Label>
                 <Input min={0} type="number" value={baseRent} onWheel={preventWheelChange} onChange={(event) => setBaseRent(event.target.value)} />
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Due</Label>
+                <Input min={0} type="number" value={due} onWheel={preventWheelChange} onChange={(event) => setDue(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Penalty (10% of due)</Label>
+                <Input value={penalty.toFixed(2)} readOnly />
+              </div>
+            </div>
+
             <div className="space-y-2">
-              <Label>Electricity</Label>
+              <Label>Electricity Bill</Label>
               <div className="grid grid-cols-3 gap-3">
                 <Input
                   min={0}
@@ -450,7 +533,7 @@ export default function TransactionsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Water</Label>
+              <Label>Water Bill</Label>
               <div className="grid grid-cols-3 gap-3">
                 <Input
                   min={0}
@@ -483,8 +566,8 @@ export default function TransactionsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Internet</Label>
-              <Input min={0} type="number" value={internet} onWheel={preventWheelChange} onChange={(event) => setInternet(event.target.value)} />
+              <Label>Wifi</Label>
+              <Input min={0} type="number" value={wifiCharge} onWheel={preventWheelChange} onChange={(event) => setWifiCharge(event.target.value)} />
             </div>
 
             <div className="space-y-2">

@@ -32,7 +32,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
 import {
   createPropertyTenant,
@@ -40,6 +39,7 @@ import {
   fetchBills,
   fetchProperties,
   fetchPropertyTenants,
+  getBillSectionSummary,
   type BillRecord,
   type PropertyRecord,
   type PropertyTenantRecord,
@@ -69,7 +69,6 @@ export default function PropertyDetailPage() {
   const [tenantError, setTenantError] = useState<string | null>(null);
   const [tenantMode, setTenantMode] = useState<"code" | "manual">("code");
   const [copied, setCopied] = useState(false);
-  const [tenantToDeleteId, setTenantToDeleteId] = useState("");
   const [deleteTenantOpen, setDeleteTenantOpen] = useState(false);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
@@ -106,17 +105,6 @@ export default function PropertyDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
-
-  useEffect(() => {
-    if (tenants.length === 0) {
-      setTenantToDeleteId("");
-      return;
-    }
-
-    if (!tenantToDeleteId || !tenants.some((tenant) => String(tenant.id) === tenantToDeleteId)) {
-      setTenantToDeleteId(String(tenants[0].id));
-    }
-  }, [tenantToDeleteId, tenants]);
 
   const resetTenantForm = () => {
     setTenantName("");
@@ -157,8 +145,8 @@ export default function PropertyDetailPage() {
   };
 
   const handleDeleteTenant = async () => {
-    if (!tenantToDeleteId) {
-      setDeleteError("Select a tenant to delete.");
+    if (!tenantToDelete) {
+      setDeleteError("No tenant found for this property.");
       return;
     }
 
@@ -166,7 +154,7 @@ export default function PropertyDetailPage() {
     setDeleteSubmitting(true);
 
     try {
-      await deletePropertyTenant(Number(tenantToDeleteId));
+      await deletePropertyTenant(tenantToDelete.id);
       const updated = await fetchPropertyTenants(id);
       setTenants(updated);
       closeDeleteDialog();
@@ -214,6 +202,7 @@ export default function PropertyDetailPage() {
   ];
 
   const hasTenants = tenants.length > 0;
+  const tenantToDelete = tenants.find((tenant) => tenant.status === "active") || tenants[0] || null;
 
   return (
     <div className="space-y-6">
@@ -340,15 +329,53 @@ export default function PropertyDetailPage() {
             </CardHeader>
             <CardContent>
               {bills.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No bills yet for this property.</p>
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">No bills yet for this property.</p>
+                  <Button asChild size="sm">
+                    <Link href={`/transactions?propertyId=${property.id}`}>Create First Bill</Link>
+                  </Button>
+                </div>
               ) : (
                 <div className="space-y-2">
-                  {bills.map((bill) => (
-                    <div key={bill.id} className="rounded-md border p-3 text-sm">
-                      <div className="font-medium">{bill.tenant_name} - {bill.current_month}</div>
-                      <div className="text-muted-foreground">${Number(bill.total || 0).toFixed(2)} | {bill.status}</div>
-                    </div>
-                  ))}
+                  {bills.map((bill) => {
+                    const sections = getBillSectionSummary(bill);
+                    return (
+                      <div key={bill.id} className="rounded-md border p-3 text-sm space-y-1">
+                        <div className="font-medium">{bill.tenant_name} - {bill.current_month}</div>
+                        <div className="text-muted-foreground capitalize">Status: {bill.status}</div>
+                        <div className="flex justify-between"><span>Rent (per month)</span><span>${sections.rentPerMonth.toFixed(2)}</span></div>
+                        <div className="flex justify-between"><span>Due</span><span>${sections.due.toFixed(2)}</span></div>
+                        <div className="flex justify-between"><span>Penalty (10% of due)</span><span>${sections.penalty.toFixed(2)}</span></div>
+                        <div className="text-xs rounded-md border px-2 py-1">
+                          <div className="flex justify-between"><span>Electricity bill</span><span>${sections.electricity.amount.toFixed(2)}</span></div>
+                          <div className="text-muted-foreground">
+                            Prev: {sections.electricity.previousUnit} | Current: {sections.electricity.currentUnit} | Rate: {sections.electricity.rate}
+                          </div>
+                        </div>
+                        <div className="text-xs rounded-md border px-2 py-1">
+                          <div className="flex justify-between"><span>Water bill</span><span>${sections.water.amount.toFixed(2)}</span></div>
+                          <div className="text-muted-foreground">
+                            Prev: {sections.water.previousUnit} | Current: {sections.water.currentUnit} | Rate: {sections.water.rate}
+                          </div>
+                        </div>
+                        <div className="flex justify-between"><span>Wifi</span><span>${sections.wifi.toFixed(2)}</span></div>
+                        <div className="text-xs rounded-md border px-2 py-1">
+                          <div className="flex justify-between"><span>Others</span><span>${sections.othersTotal.toFixed(2)}</span></div>
+                          {sections.others.length > 0 ? (
+                            sections.others.map((charge, index) => (
+                              <div key={`${bill.id}-${charge.name}-${index}`} className="flex justify-between text-muted-foreground">
+                                <span>{charge.name}</span>
+                                <span>${charge.amount.toFixed(2)}</span>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-muted-foreground">No additional charges</div>
+                          )}
+                        </div>
+                        <div className="flex justify-between font-medium"><span>Total</span><span>${sections.total.toFixed(2)}</span></div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -418,25 +445,15 @@ export default function PropertyDetailPage() {
                 <CardTitle className="text-base">Delete Tenant</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="space-y-2">
-                  <Label>Select Tenant</Label>
-                  <Select value={tenantToDeleteId} onValueChange={setTenantToDeleteId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select tenant" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tenants.map((tenant) => (
-                        <SelectItem key={tenant.id} value={String(tenant.id)}>
-                          {tenant.tenant_name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
+                  <div className="font-medium">{tenantToDelete?.tenant_name || "No active tenant"}</div>
+                  <div className="text-xs text-muted-foreground">{tenantToDelete?.tenant_email || "No email"}</div>
+                  <div className="text-xs text-muted-foreground">{tenantToDelete?.tenant_phone || "No phone"}</div>
                 </div>
                 <Button
                   className="w-full"
                   variant="destructive"
-                  disabled={!tenantToDeleteId}
+                  disabled={!tenantToDelete}
                   onClick={() => {
                     setDeleteError(null);
                     setDeleteStep(1);
@@ -552,7 +569,7 @@ export default function PropertyDetailPage() {
             <DialogDescription>
               {deleteStep === 1
                 ? "Deleting a tenant will remove their manual tenant record for this property."
-                : "This action is permanent. Click confirm only if you want to delete this tenant now."}
+                : `This action is permanent. Click confirm only if you want to delete ${tenantToDelete?.tenant_name || "this tenant"} now.`}
             </DialogDescription>
           </DialogHeader>
 
