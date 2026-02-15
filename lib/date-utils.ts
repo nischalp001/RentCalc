@@ -1,43 +1,112 @@
-import { format } from "date-fns";
+import { ADToBS, BSToAD } from "bikram-sambat-js";
 
-// Utility function to convert AD date to BS date string
-export function adToBs(adDate: Date | string): string {
-  // This is a simplified conversion - in a real app, you'd use a proper calendar library
-  // For now, we'll return a placeholder BS date format
-  const date = typeof adDate === 'string' ? new Date(adDate) : adDate;
-  const year = date.getFullYear() + 57; // Approximate conversion (AD + 57 = BS)
-  const month = date.getMonth() + 1;
-  const day = date.getDate();
+const bsDatePattern = /^\d{4}-\d{2}-\d{2}$/;
 
-  return `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
-}
+const pad2 = (value: number) => String(value).padStart(2, "0");
 
-// Utility function to format date for display with both AD and BS
-export function formatDateWithBothCalendars(date: Date | string | null): {
-  ad: string;
-  bs: string;
-  full: string;
-} {
-  if (!date) return { ad: 'N/A', bs: 'N/A', full: 'N/A' };
-
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
-
-  const ad = format(dateObj, 'MMM d, yyyy');
-  const bs = adToBs(dateObj);
-  const full = `${ad} (${bs})`;
-
-  return { ad, bs, full };
-}
-
-// Utility function to get calendar preference from localStorage
-export function getCalendarPreference(): 'ad' | 'bs' | 'both' {
-  if (typeof window === 'undefined') return 'both';
-  return (localStorage.getItem('calendarPreference') as 'ad' | 'bs' | 'both') || 'both';
-}
-
-// Utility function to set calendar preference
-export function setCalendarPreference(preference: 'ad' | 'bs' | 'both'): void {
-  if (typeof window !== 'undefined') {
-    localStorage.setItem('calendarPreference', preference);
+function toDate(input: Date | string) {
+  if (input instanceof Date) {
+    return input;
   }
+
+  const parsed = new Date(input);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  return null;
+}
+
+export function adToBs(adDate: Date | string | null | undefined): string {
+  if (!adDate) {
+    return "";
+  }
+
+  try {
+    const dateObj = toDate(adDate);
+    if (dateObj) {
+      return ADToBS(dateObj);
+    }
+
+    if (typeof adDate === "string" && bsDatePattern.test(adDate)) {
+      return ADToBS(adDate);
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+export function bsToAd(bsDate: string | null | undefined): string {
+  const value = bsDate?.trim() || "";
+  if (!value) {
+    return "";
+  }
+
+  if (!bsDatePattern.test(value)) {
+    throw new Error("Invalid Nepali date format. Use YYYY-MM-DD.");
+  }
+
+  const converted = BSToAD(value);
+  return converted.slice(0, 10);
+}
+
+export function getTodayBsDate() {
+  return adToBs(new Date());
+}
+
+export function formatNepaliDateFromAd(adDate: Date | string | null | undefined) {
+  const bs = adToBs(adDate || "");
+  return bs || "N/A";
+}
+
+export function formatNepaliDateTimeFromAd(adDate: Date | string | null | undefined) {
+  if (!adDate) {
+    return "N/A";
+  }
+
+  const dateObj = toDate(adDate);
+  const bs = adToBs(adDate);
+  if (!dateObj || !bs) {
+    return "N/A";
+  }
+
+  const time = dateObj.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return `${bs} ${time}`;
+}
+
+export function buildMonthlyBillingDateFromJoinDate(joinDateBs?: string | null, referenceBsDate?: string | null) {
+  const reference = (referenceBsDate?.trim() || getTodayBsDate()).trim();
+  if (!reference || !bsDatePattern.test(reference)) {
+    return "";
+  }
+
+  const [yearText, monthText, dayText] = reference.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const fallbackDay = Number(dayText);
+
+  const joinDayCandidate = (joinDateBs?.trim() && bsDatePattern.test(joinDateBs.trim()))
+    ? Number(joinDateBs.trim().split("-")[2])
+    : fallbackDay;
+
+  if (!Number.isFinite(year) || !Number.isFinite(month)) {
+    return "";
+  }
+
+  let day = Number.isFinite(joinDayCandidate) ? joinDayCandidate : fallbackDay;
+  day = Math.min(Math.max(day, 1), 32);
+
+  for (let testDay = day; testDay >= 1; testDay -= 1) {
+    const candidate = `${year}-${pad2(month)}-${pad2(testDay)}`;
+    try {
+      BSToAD(candidate);
+      return candidate;
+    } catch {
+      // Continue until a valid date for this month is found.
+    }
+  }
+
+  return reference;
 }

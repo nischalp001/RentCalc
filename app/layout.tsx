@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
+import "nepali-datepicker-reactjs/dist/index.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
