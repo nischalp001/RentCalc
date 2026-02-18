@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   User,
   Mail,
@@ -20,6 +21,7 @@ import {
   Home,
 } from "lucide-react";
 import { useUser } from "@/lib/user-context";
+import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +45,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 
 export default function ProfilePage() {
+  const router = useRouter();
   const { user, connections } = useUser();
   const [editProfileOpen, setEditProfileOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -60,6 +63,12 @@ export default function ProfilePage() {
     navigator.clipboard.writeText(user.id);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleSignOut = async () => {
+    const supabase = getSupabaseBrowserClient();
+    await supabase.auth.signOut();
+    router.replace("/login");
   };
 
   return (
@@ -412,6 +421,7 @@ export default function ProfilePage() {
       <Button
         variant="outline"
         className="w-full bg-transparent text-destructive hover:bg-destructive/10 hover:text-destructive"
+        onClick={handleSignOut}
       >
         <LogOut className="mr-2 h-4 w-4" />
         Sign Out

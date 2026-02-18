@@ -114,6 +114,7 @@ export type CreatePropertyInput = {
   wifi: boolean;
   furnishedLevel: "none" | "semi" | "full";
   otherServices: string[];
+  ownerProfileId?: string;
   ownerName?: string;
   ownerEmail?: string;
   ownerAppUserId?: string;
@@ -173,6 +174,19 @@ export type CreatePropertyTenantInput = {
   tenantEmail?: string;
   tenantPhone?: string;
   dateJoined?: string;
+};
+
+export type ConnectTenantToPropertyByCodeInput = {
+  propertyCode: string;
+  tenantName: string;
+  tenantEmail?: string;
+  tenantPhone?: string;
+  tenantProfileId?: string;
+};
+
+export type ConnectTenantToPropertyByCodeResult = {
+  property: Pick<PropertyRecord, "id" | "property_name" | "property_code">;
+  tenant: PropertyTenantRecord;
 };
 
 type CreatePropertyResult = {
@@ -418,12 +432,18 @@ async function resolveOwnerProfileId(input: CreatePropertyInput) {
     return null;
   }
 
-  const payload = {
+  const payload: Record<string, string> = {
     email: ownerEmail,
     name: input.ownerName?.trim() || ownerEmail.split("@")[0],
-    app_user_id: input.ownerAppUserId?.trim() || null,
-    auth_user_id: input.ownerAuthUserId?.trim() || null,
   };
+  const ownerAppUserId = input.ownerAppUserId?.trim();
+  const ownerAuthUserId = input.ownerAuthUserId?.trim();
+  if (ownerAppUserId) {
+    payload.app_user_id = ownerAppUserId;
+  }
+  if (ownerAuthUserId) {
+    payload.auth_user_id = ownerAuthUserId;
+  }
 
   const { data, error } = await supabase
     .from("profiles")
@@ -437,6 +457,15 @@ async function resolveOwnerProfileId(input: CreatePropertyInput) {
   }
 
   return data?.id || null;
+}
+
+async function resolveCurrentProfileId() {
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase.rpc("current_profile_id");
+  if (error) {
+    throw new Error(error.message || "Failed to resolve current profile");
+  }
+  return typeof data === "string" && data.trim() ? data : null;
 }
 
 export async function fetchProperties() {
@@ -457,7 +486,14 @@ export async function createProperty(input: CreatePropertyInput): Promise<Create
   validateCreatePropertyInput(input);
 
   const supabase = getSupabaseBrowserClient();
-  const ownerProfileId = await resolveOwnerProfileId(input);
+  const currentProfileId = await resolveCurrentProfileId();
+  const ownerProfileId =
+    currentProfileId ||
+    input.ownerProfileId?.trim() ||
+    await resolveOwnerProfileId(input);
+  if (!ownerProfileId) {
+    throw new Error("Your account profile is not ready yet. Please close this window and try again.");
+  }
   const normalizedCarParkingSpaces = input.carParking ? input.carParkingSpaces : 0;
 
   const { data: property, error: propertyError } = await supabase
@@ -659,6 +695,90 @@ export async function createPropertyTenant(input: CreatePropertyTenantInput) {
     date_joined: data.date_joined ? adToBs(data.date_joined) : null,
     date_end: data.date_end ? adToBs(data.date_end) : null,
   } as PropertyTenantRecord;
+}
+
+export async function connectTenantToPropertyByCode(
+  input: ConnectTenantToPropertyByCodeInput
+): Promise<ConnectTenantToPropertyByCodeResult> {
+  const propertyCode = input.propertyCode.trim();
+  if (!/^\d{10}$/.test(propertyCode)) {
+    throw new Error("Property code must be a 10-digit number.");
+  }
+
+  const tenantName = input.tenantName.trim();
+  if (!tenantName) {
+    throw new Error("Tenant name is required.");
+  }
+
+  const tenantEmail = input.tenantEmail?.trim() || "";
+  if (tenantEmail) {
+    const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tenantEmail);
+    if (!valid) {
+      throw new Error("Tenant email format is invalid.");
+    }
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const { data: property, error: propertyError } = await supabase
+    .from("properties")
+    .select("id, property_name, property_code")
+    .eq("property_code", propertyCode)
+    .maybeSingle();
+
+  if (propertyError) {
+    throw new Error(propertyError.message || "Failed to verify property code");
+  }
+  if (!property) {
+    throw new Error("No property found for this code.");
+  }
+
+  let duplicateQuery = supabase
+    .from("property_tenants")
+    .select("id")
+    .eq("property_id", property.id)
+    .eq("status", "active")
+    .limit(1);
+
+  if (tenantEmail) {
+    duplicateQuery = duplicateQuery.eq("tenant_email", tenantEmail);
+  } else {
+    duplicateQuery = duplicateQuery.eq("tenant_name", tenantName);
+  }
+
+  const { data: duplicateRows, error: duplicateError } = await duplicateQuery;
+  if (duplicateError) {
+    throw new Error(duplicateError.message || "Failed to check existing connection");
+  }
+  if ((duplicateRows || []).length > 0) {
+    throw new Error("You are already connected to this property.");
+  }
+
+  const { data: tenant, error: tenantError } = await supabase
+    .from("property_tenants")
+    .insert({
+      property_id: property.id,
+      tenant_profile_id: input.tenantProfileId || null,
+      tenant_name: tenantName,
+      tenant_email: tenantEmail || null,
+      tenant_phone: input.tenantPhone?.trim() || null,
+      date_joined: new Date().toISOString().slice(0, 10),
+      status: "active",
+    })
+    .select("*")
+    .single();
+
+  if (tenantError || !tenant) {
+    throw new Error(tenantError?.message || "Failed to connect to property");
+  }
+
+  return {
+    property: property as Pick<PropertyRecord, "id" | "property_name" | "property_code">,
+    tenant: {
+      ...(tenant as PropertyTenantRecord),
+      date_joined: tenant.date_joined ? adToBs(tenant.date_joined) : null,
+      date_end: tenant.date_end ? adToBs(tenant.date_end) : null,
+    },
+  };
 }
 
 export async function deletePropertyTenant(tenantId: number) {

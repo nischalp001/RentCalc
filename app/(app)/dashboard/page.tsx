@@ -1,19 +1,40 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Receipt, DollarSign, Plus } from "lucide-react";
+import { Building2, Receipt, DollarSign, Plus, Link2 } from "lucide-react";
 import { PropertyFormDialog } from "@/components/properties/property-form-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchBills, fetchProperties, type BillRecord, type PropertyRecord } from "@/lib/rental-data";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useUser } from "@/lib/user-context";
+import {
+  connectTenantToPropertyByCode,
+  fetchBills,
+  fetchProperties,
+  type BillRecord,
+  type PropertyRecord,
+} from "@/lib/rental-data";
 
 export default function DashboardPage() {
+  const { user } = useUser();
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
   const [bills, setBills] = useState<BillRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [addPropertyOpen, setAddPropertyOpen] = useState(false);
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
+  const [connectPropertyCode, setConnectPropertyCode] = useState("");
+  const [connectSubmitting, setConnectSubmitting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     try {
@@ -49,6 +70,33 @@ export default function DashboardPage() {
     [bills]
   );
 
+  const resetConnectDialog = () => {
+    setConnectPropertyCode("");
+    setConnectSubmitting(false);
+    setConnectError(null);
+  };
+
+  const handleConnectToProperty = async () => {
+    setConnectError(null);
+    setConnectSubmitting(true);
+    try {
+      await connectTenantToPropertyByCode({
+        propertyCode: connectPropertyCode,
+        tenantName: user.name,
+        tenantEmail: user.email,
+        tenantPhone: user.phone,
+        tenantProfileId: user.profileId,
+      });
+      setConnectDialogOpen(false);
+      resetConnectDialog();
+      await loadDashboardData();
+    } catch (caughtError) {
+      setConnectError(caughtError instanceof Error ? caughtError.message : "Failed to connect property");
+    } finally {
+      setConnectSubmitting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -61,8 +109,15 @@ export default function DashboardPage() {
             <Plus className="mr-2 h-4 w-4" />
             Add Property
           </Button>
-          <Button variant="outline" asChild>
-            <Link href="/transactions">Create Bill</Link>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setConnectDialogOpen(true);
+              setConnectError(null);
+            }}
+          >
+            <Link2 className="mr-2 h-4 w-4" />
+            Connect to a Property
           </Button>
         </div>
       </div>
@@ -144,6 +199,48 @@ export default function DashboardPage() {
         onOpenChange={setAddPropertyOpen}
         onSuccess={loadDashboardData}
       />
+
+      <Dialog
+        open={connectDialogOpen}
+        onOpenChange={(open) => {
+          setConnectDialogOpen(open);
+          if (!open) {
+            resetConnectDialog();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Connect to a Property</DialogTitle>
+            <DialogDescription>
+              Enter the 10-digit unique property number shared by your landlord.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="connect-property-code">Unique Property Number</Label>
+            <Input
+              id="connect-property-code"
+              placeholder="Enter 10-digit code"
+              className="font-mono"
+              value={connectPropertyCode}
+              onChange={(event) => setConnectPropertyCode(event.target.value.replace(/\D/g, "").slice(0, 10))}
+              maxLength={10}
+            />
+          </div>
+
+          {connectError && <p className="text-sm text-destructive">{connectError}</p>}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConnectDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleConnectToProperty} disabled={connectSubmitting || !connectPropertyCode.trim()}>
+              {connectSubmitting ? "Connecting..." : "Connect Property"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

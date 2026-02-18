@@ -1,6 +1,8 @@
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { ensureProfileForAuthUser } from "@/lib/profile-auth";
+import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 
 export type ConnectionRole = "landlord" | "tenant";
 
@@ -18,7 +20,9 @@ export interface Connection {
 }
 
 interface User {
-  id: string;
+  id: string; // Public app user ID (profiles.app_user_id)
+  profileId?: string;
+  authUserId?: string;
   name: string;
   email: string;
   phone?: string;
@@ -28,6 +32,7 @@ interface User {
 interface UserContextType {
   user: User;
   setUser: (user: User) => void;
+  profileReady: boolean;
   connections: Connection[];
   addConnection: (connection: Connection) => void;
   removeConnection: (id: string) => void;
@@ -35,64 +40,97 @@ interface UserContextType {
 }
 
 const defaultUser: User = {
-  id: "user_001",
-  name: "Alex Johnson",
-  email: "alex@example.com",
-  phone: "+1 (555) 123-4567",
+  id: "USRDEMO001",
+  name: "User",
+  email: "user@example.com",
+  phone: "",
   avatar: undefined,
 };
 
-// Mock connections data
-const defaultConnections: Connection[] = [
-  {
-    id: "conn_001",
-    name: "John Doe",
-    email: "john@example.com",
-    phone: "+1 (555) 234-5678",
-    role: "tenant",
-    propertyId: "prop_001",
-    propertyName: "Sunset Apartments - Unit 3B",
-    status: "active",
-    unreadMessages: 2,
-  },
-  {
-    id: "conn_002",
-    name: "Jane Smith",
-    email: "jane@example.com",
-    phone: "+1 (555) 345-6789",
-    role: "tenant",
-    propertyId: "prop_002",
-    propertyName: "Oak Street House",
-    status: "active",
-    unreadMessages: 0,
-  },
-  {
-    id: "conn_003",
-    name: "Property Management Inc.",
-    email: "support@propmanagement.com",
-    phone: "+1 (555) 456-7890",
-    role: "landlord",
-    propertyId: "prop_003",
-    propertyName: "Marina View Apartments - Unit 4B",
-    status: "active",
-    unreadMessages: 1,
-  },
-  {
-    id: "conn_004",
-    name: "Robert Wilson",
-    email: "robert@example.com",
-    role: "tenant",
-    status: "pending",
-    unreadMessages: 0,
-  },
-];
+const defaultConnections: Connection[] = [];
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(defaultUser);
+  const [profileReady, setProfileReady] = useState(false);
   const [connections, setConnections] =
     useState<Connection[]>(defaultConnections);
+
+  useEffect(() => {
+    let active = true;
+    const supabase = getSupabaseBrowserClient();
+
+    const syncProfile = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!active) return;
+        if (error || !data.session?.user) {
+          setUser(defaultUser);
+          setProfileReady(true);
+          return;
+        }
+
+        const profile = await ensureProfileForAuthUser(data.session.user);
+        if (!active) return;
+
+        setUser({
+          id: profile.app_user_id || profile.id,
+          profileId: profile.id,
+          authUserId: profile.auth_user_id || undefined,
+          name: profile.name,
+          email: profile.email,
+          phone: profile.phone || undefined,
+          avatar: profile.avatar_url || undefined,
+        });
+      } catch {
+        if (!active) return;
+      } finally {
+        if (active) {
+          setProfileReady(true);
+        }
+      }
+    };
+
+    void syncProfile();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+
+      if (!session?.user) {
+        setUser(defaultUser);
+        setProfileReady(true);
+        return;
+      }
+
+      setProfileReady(false);
+      void ensureProfileForAuthUser(session.user)
+        .then((profile) => {
+          if (!active) return;
+          setUser({
+            id: profile.app_user_id || profile.id,
+            profileId: profile.id,
+            authUserId: profile.auth_user_id || undefined,
+            name: profile.name,
+            email: profile.email,
+            phone: profile.phone || undefined,
+            avatar: profile.avatar_url || undefined,
+          });
+        })
+        .finally(() => {
+          if (active) {
+            setProfileReady(true);
+          }
+        });
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const addConnection = (connection: Connection) => {
     setConnections((prev) => [...prev, connection]);
@@ -113,6 +151,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         setUser,
+        profileReady,
         connections,
         addConnection,
         removeConnection,
