@@ -177,6 +177,92 @@ $$;
 
 grant execute on function public.claim_unowned_properties() to authenticated;
 
+-- Secure helper: owner connects tenant by the tenant's shared app_user_id.
+create or replace function public.connect_tenant_by_app_user_id(
+  p_property_id bigint,
+  p_tenant_app_user_id text
+)
+returns public.property_tenants
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid;
+  target_profile public.profiles%rowtype;
+  inserted_row public.property_tenants%rowtype;
+  normalized_user_id text;
+begin
+  me := public.current_profile_id();
+  if me is null then
+    raise exception 'No profile mapped to the authenticated user';
+  end if;
+
+  if p_property_id is null or p_property_id <= 0 then
+    raise exception 'Valid property ID is required';
+  end if;
+
+  normalized_user_id := trim(coalesce(p_tenant_app_user_id, ''));
+  if normalized_user_id = '' then
+    raise exception 'Tenant unique ID is required';
+  end if;
+
+  if not exists (
+    select 1
+    from public.properties p
+    where p.id = p_property_id
+      and p.owner_profile_id = me
+  ) then
+    raise exception 'Only property owner can connect tenant by unique ID';
+  end if;
+
+  select *
+  into target_profile
+  from public.profiles
+  where app_user_id = normalized_user_id
+  limit 1;
+
+  if target_profile.id is null then
+    raise exception 'No user found with this unique ID.';
+  end if;
+
+  if exists (
+    select 1
+    from public.property_tenants pt
+    where pt.property_id = p_property_id
+      and pt.tenant_profile_id = target_profile.id
+      and coalesce(pt.status, 'active') = 'active'
+  ) then
+    raise exception 'This user is already connected as tenant for this property.';
+  end if;
+
+  insert into public.property_tenants (
+    property_id,
+    tenant_profile_id,
+    tenant_name,
+    tenant_email,
+    tenant_phone,
+    date_joined,
+    status
+  )
+  values (
+    p_property_id,
+    target_profile.id,
+    coalesce(nullif(trim(target_profile.name), ''), 'Tenant'),
+    target_profile.email,
+    target_profile.phone,
+    current_date,
+    'active'
+  )
+  returning *
+  into inserted_row;
+
+  return inserted_row;
+end;
+$$;
+
+grant execute on function public.connect_tenant_by_app_user_id(bigint, text) to authenticated;
+
 -- Ensure RLS is enabled.
 alter table public.profiles enable row level security;
 alter table public.properties enable row level security;

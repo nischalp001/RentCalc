@@ -176,6 +176,11 @@ export type CreatePropertyTenantInput = {
   dateJoined?: string;
 };
 
+export type CreatePropertyTenantByUserIdInput = {
+  propertyId: number;
+  tenantAppUserId: string;
+};
+
 export type ConnectTenantToPropertyByCodeInput = {
   propertyCode: string;
   tenantName: string;
@@ -462,17 +467,87 @@ async function resolveOwnerProfileId(input: CreatePropertyInput) {
 async function resolveCurrentProfileId() {
   const supabase = getSupabaseBrowserClient();
   const { data, error } = await supabase.rpc("current_profile_id");
-  if (error) {
-    throw new Error(error.message || "Failed to resolve current profile");
+  if (!error && typeof data === "string" && data.trim()) {
+    return data;
   }
-  return typeof data === "string" && data.trim() ? data : null;
+
+  const {
+    data: { session },
+    error: sessionError,
+  } = await supabase.auth.getSession();
+  if (sessionError) {
+    throw new Error(sessionError.message || "Failed to read session");
+  }
+
+  const authUserId = session?.user?.id;
+  if (!authUserId) {
+    return null;
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("auth_user_id", authUserId)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(profileError.message || "Failed to resolve current profile");
+  }
+
+  return profile?.id || null;
+}
+
+async function fetchAccessiblePropertyIds(profileId: string) {
+  const supabase = getSupabaseBrowserClient();
+  const [ownedResult, tenantResult] = await Promise.all([
+    supabase.from("properties").select("id").eq("owner_profile_id", profileId),
+    supabase
+      .from("property_tenants")
+      .select("property_id")
+      .eq("tenant_profile_id", profileId)
+      .eq("status", "active"),
+  ]);
+
+  if (ownedResult.error) {
+    throw new Error(ownedResult.error.message || "Failed to load owned properties");
+  }
+  if (tenantResult.error) {
+    throw new Error(tenantResult.error.message || "Failed to load tenant properties");
+  }
+
+  const ids = new Set<number>();
+  (ownedResult.data || []).forEach((row) => {
+    const id = Number(row.id);
+    if (Number.isFinite(id) && id > 0) {
+      ids.add(id);
+    }
+  });
+  (tenantResult.data || []).forEach((row) => {
+    const id = Number(row.property_id);
+    if (Number.isFinite(id) && id > 0) {
+      ids.add(id);
+    }
+  });
+
+  return Array.from(ids);
 }
 
 export async function fetchProperties() {
   const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    return [];
+  }
+
+  const accessiblePropertyIds = await fetchAccessiblePropertyIds(profileId);
+  if (accessiblePropertyIds.length === 0) {
+    return [];
+  }
+
   const { data, error } = await supabase
     .from("properties")
     .select("*, property_images(*)")
+    .in("id", accessiblePropertyIds)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -606,14 +681,32 @@ type BillFilter = {
 
 export async function fetchBills(filter: BillFilter = {}) {
   const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    return [];
+  }
+
+  const accessiblePropertyIds = await fetchAccessiblePropertyIds(profileId);
+  if (accessiblePropertyIds.length === 0) {
+    return [];
+  }
+
+  const filteredPropertyIds =
+    typeof filter.propertyId === "number"
+      ? accessiblePropertyIds.includes(filter.propertyId)
+        ? [filter.propertyId]
+        : []
+      : accessiblePropertyIds;
+
+  if (filteredPropertyIds.length === 0) {
+    return [];
+  }
+
   let query = supabase
     .from("bills")
     .select("*, bill_custom_fields(*)")
+    .in("property_id", filteredPropertyIds)
     .order("created_at", { ascending: false });
-
-  if (typeof filter.propertyId === "number") {
-    query = query.eq("property_id", filter.propertyId);
-  }
 
   if (filter.status) {
     query = query.eq("status", filter.status);
@@ -634,6 +727,16 @@ export async function fetchBills(filter: BillFilter = {}) {
 export async function fetchPropertyTenants(propertyId: number) {
   if (!Number.isFinite(propertyId) || propertyId <= 0) {
     throw new Error("Valid property ID is required.");
+  }
+
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    throw new Error("You must be logged in to view tenants.");
+  }
+
+  const accessiblePropertyIds = await fetchAccessiblePropertyIds(profileId);
+  if (!accessiblePropertyIds.includes(propertyId)) {
+    throw new Error("You do not have access to this property.");
   }
 
   const supabase = getSupabaseBrowserClient();
@@ -694,6 +797,88 @@ export async function createPropertyTenant(input: CreatePropertyTenantInput) {
     ...(data as PropertyTenantRecord),
     date_joined: data.date_joined ? adToBs(data.date_joined) : null,
     date_end: data.date_end ? adToBs(data.date_end) : null,
+  } as PropertyTenantRecord;
+}
+
+export async function createPropertyTenantByUserId(input: CreatePropertyTenantByUserIdInput) {
+  if (!Number.isFinite(input.propertyId) || input.propertyId <= 0) {
+    throw new Error("Valid property ID is required.");
+  }
+
+  const tenantAppUserId = input.tenantAppUserId.trim();
+  if (!tenantAppUserId) {
+    throw new Error("Tenant unique ID is required.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const { data: rpcTenant, error: rpcError } = await supabase.rpc("connect_tenant_by_app_user_id", {
+    p_property_id: input.propertyId,
+    p_tenant_app_user_id: tenantAppUserId,
+  });
+
+  if (!rpcError) {
+    const row = (Array.isArray(rpcTenant) ? rpcTenant[0] : rpcTenant) as PropertyTenantRecord | null;
+    if (row) {
+      return {
+        ...row,
+        date_joined: row.date_joined ? adToBs(row.date_joined) : null,
+        date_end: row.date_end ? adToBs(row.date_end) : null,
+      } as PropertyTenantRecord;
+    }
+  } else if (!/connect_tenant_by_app_user_id/i.test(rpcError.message || "")) {
+    throw new Error(rpcError.message || "Failed to connect tenant");
+  }
+
+  const { data: tenantProfile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id, name, email, phone")
+    .eq("app_user_id", tenantAppUserId)
+    .maybeSingle();
+
+  if (profileError) {
+    throw new Error(profileError.message || "Failed to find tenant profile");
+  }
+  if (!tenantProfile) {
+    throw new Error("No user found with this unique ID.");
+  }
+
+  const { data: existingTenant, error: existingError } = await supabase
+    .from("property_tenants")
+    .select("id")
+    .eq("property_id", input.propertyId)
+    .eq("tenant_profile_id", tenantProfile.id)
+    .eq("status", "active")
+    .limit(1);
+
+  if (existingError) {
+    throw new Error(existingError.message || "Failed to check existing tenant");
+  }
+  if ((existingTenant || []).length > 0) {
+    throw new Error("This user is already connected as tenant for this property.");
+  }
+
+  const { data: insertedTenant, error: insertError } = await supabase
+    .from("property_tenants")
+    .insert({
+      property_id: input.propertyId,
+      tenant_profile_id: tenantProfile.id,
+      tenant_name: tenantProfile.name || "Tenant",
+      tenant_email: tenantProfile.email || null,
+      tenant_phone: tenantProfile.phone || null,
+      date_joined: new Date().toISOString().slice(0, 10),
+      status: "active",
+    })
+    .select("*")
+    .single();
+
+  if (insertError || !insertedTenant) {
+    throw new Error(insertError?.message || "Failed to connect tenant");
+  }
+
+  return {
+    ...(insertedTenant as PropertyTenantRecord),
+    date_joined: insertedTenant.date_joined ? adToBs(insertedTenant.date_joined) : null,
+    date_end: insertedTenant.date_end ? adToBs(insertedTenant.date_end) : null,
   } as PropertyTenantRecord;
 }
 

@@ -69,6 +69,7 @@ export default function TransactionsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [noPropertyDialogOpen, setNoPropertyDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [hasAppliedPropertyPreset, setHasAppliedPropertyPreset] = useState(false);
 
@@ -363,6 +364,16 @@ export default function TransactionsPage() {
     setWifiCharge("");
   };
 
+  const hasProperties = properties.length > 0;
+
+  const handleOpenCreateBill = () => {
+    if (!hasProperties) {
+      setNoPropertyDialogOpen(true);
+      return;
+    }
+    setCreateOpen(true);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -370,7 +381,7 @@ export default function TransactionsPage() {
           <h1 className="text-xl font-semibold lg:text-2xl">Rent & Transactions</h1>
           <p className="text-sm text-muted-foreground">Live rent data from Supabase</p>
         </div>
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button onClick={handleOpenCreateBill}>
           <Plus className="mr-2 h-4 w-4" />
           Create Bill
         </Button>
@@ -379,6 +390,14 @@ export default function TransactionsPage() {
       {error && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">{error}</CardContent>
+        </Card>
+      )}
+
+      {!loading && !hasProperties && (
+        <Card className="border-amber-300/60 bg-amber-50/30">
+          <CardContent className="pt-6 text-sm text-amber-700">
+            You have not added a property yet. Add a property first to create bills.
+          </CardContent>
         </Card>
       )}
 
@@ -618,6 +637,22 @@ export default function TransactionsPage() {
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
             <Button onClick={handleCreateBill} disabled={submitting}>
               {submitting ? "Saving..." : "Save Bill"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={noPropertyDialogOpen} onOpenChange={setNoPropertyDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Cannot Create Bill</DialogTitle>
+            <DialogDescription>
+              You have not added a property yet. Please add a property before creating a bill.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoPropertyDialogOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

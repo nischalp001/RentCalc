@@ -13,6 +13,7 @@ Run the schema script before using `/properties`, `/transactions`, or `/dashboar
    - connect profiles to authenticated users
    - backfill tenant profile links
    - enforce user-based row-level security
+   - add secure RPC `connect_tenant_by_app_user_id(...)` for owner-side tenant linking
    - add helper function `claim_unowned_properties()` for one-time ownership claim
 
 ### 2. Confirm required env vars

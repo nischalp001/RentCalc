@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
 import {
   createPropertyTenant,
+  createPropertyTenantByUserId,
   deletePropertyTenant,
   fetchBills,
   fetchProperties,
@@ -68,6 +69,7 @@ export default function PropertyDetailPage() {
   const [tenantSubmitting, setTenantSubmitting] = useState(false);
   const [tenantError, setTenantError] = useState<string | null>(null);
   const [tenantMode, setTenantMode] = useState<"code" | "manual">("code");
+  const [tenantUniqueId, setTenantUniqueId] = useState("");
   const [copied, setCopied] = useState(false);
   const [deleteTenantOpen, setDeleteTenantOpen] = useState(false);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
@@ -111,6 +113,7 @@ export default function PropertyDetailPage() {
     setTenantEmail("");
     setTenantPhone("");
     setTenantDateJoined("");
+    setTenantUniqueId("");
     setTenantError(null);
     setTenantMode("code");
   };
@@ -132,6 +135,25 @@ export default function PropertyDetailPage() {
       setTenants(updated);
     } catch (caughtError) {
       setTenantError(caughtError instanceof Error ? caughtError.message : "Failed to add tenant");
+    } finally {
+      setTenantSubmitting(false);
+    }
+  };
+
+  const handleAddTenantByUniqueId = async () => {
+    setTenantError(null);
+    setTenantSubmitting(true);
+    try {
+      await createPropertyTenantByUserId({
+        propertyId: id,
+        tenantAppUserId: tenantUniqueId,
+      });
+      setAddTenantOpen(false);
+      resetTenantForm();
+      const updated = await fetchPropertyTenants(id);
+      setTenants(updated);
+    } catch (caughtError) {
+      setTenantError(caughtError instanceof Error ? caughtError.message : "Failed to connect tenant");
     } finally {
       setTenantSubmitting(false);
     }
@@ -524,6 +546,21 @@ export default function PropertyDetailPage() {
               <p className="text-sm text-muted-foreground">
                 Share this 10-digit code with the tenant. They can enter it to add this property in their list.
               </p>
+              <div className="space-y-2">
+                <Label>Tenant Unique ID</Label>
+                <Input
+                  value={tenantUniqueId}
+                  onChange={(event) => setTenantUniqueId(event.target.value)}
+                  placeholder="Enter tenant unique ID (e.g. USR1234AB)"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Enter the tenant unique ID to connect that user and add them as tenant for this property.
+                </p>
+              </div>
+              {tenantError && <p className="text-sm text-destructive">{tenantError}</p>}
+              <Button onClick={handleAddTenantByUniqueId} disabled={tenantSubmitting || !tenantUniqueId.trim()}>
+                {tenantSubmitting ? "Connecting..." : "Connect Tenant"}
+              </Button>
             </TabsContent>
 
             <TabsContent value="manual" className="space-y-3 pt-3">
