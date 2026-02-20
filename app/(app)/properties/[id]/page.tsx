@@ -33,6 +33,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
+import { useUser } from "@/lib/user-context";
 import {
   createPropertyTenant,
   createPropertyTenantByUserId,
@@ -51,6 +52,7 @@ const descriptionPreviewWordCount = 70;
 const words = (value: string) => value.trim().split(/\s+/).filter(Boolean);
 
 export default function PropertyDetailPage() {
+  const { user } = useUser();
   const params = useParams();
   const id = Number(params.id);
 
@@ -225,6 +227,7 @@ export default function PropertyDetailPage() {
 
   const hasTenants = tenants.length > 0;
   const tenantToDelete = tenants.find((tenant) => tenant.status === "active") || tenants[0] || null;
+  const isOwner = property.owner_profile_id === user.profileId;
 
   return (
     <div className="space-y-6">
@@ -259,8 +262,8 @@ export default function PropertyDetailPage() {
         </Card>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="space-y-6 lg:col-span-2">
+      <div className={`grid gap-6 ${isOwner ? "lg:grid-cols-3" : ""}`}>
+        <div className={`space-y-6 ${isOwner ? "lg:col-span-2" : ""}`}>
           <div>
             <h1 className="text-2xl font-semibold">{property.property_name}</h1>
             <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
@@ -353,9 +356,11 @@ export default function PropertyDetailPage() {
               {bills.length === 0 ? (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">No bills yet for this property.</p>
-                  <Button asChild size="sm">
-                    <Link href={`/transactions?propertyId=${property.id}`}>Create First Bill</Link>
-                  </Button>
+                  {isOwner && (
+                    <Button asChild size="sm">
+                      <Link href={`/transactions?propertyId=${property.id}`}>Create First Bill</Link>
+                    </Button>
+                  )}
                 </div>
               ) : (
                 <div className="space-y-2">
@@ -404,7 +409,8 @@ export default function PropertyDetailPage() {
           </Card>
         </div>
 
-        <div className="space-y-4">
+        {isOwner && (
+          <div className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Property Reference</CardTitle>
@@ -499,7 +505,8 @@ export default function PropertyDetailPage() {
               </CardContent>
             </Card>
           )}
-        </div>
+          </div>
+        )}
       </div>
 
       <Dialog open={addTenantOpen} onOpenChange={setAddTenantOpen}>

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useUser } from "@/lib/user-context";
 import {
   createBill,
   fetchBills,
@@ -61,6 +62,7 @@ const asNonNegative = (value: string) => {
 };
 
 export default function TransactionsPage() {
+  const { user } = useUser();
   const searchParams = useSearchParams();
   const [bills, setBills] = useState<BillRecord[]>([]);
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
@@ -118,9 +120,14 @@ export default function TransactionsPage() {
     return () => clearInterval(id);
   }, []);
 
+  const ownedProperties = useMemo(
+    () => properties.filter((property) => property.owner_profile_id === user.profileId),
+    [properties, user.profileId]
+  );
+
   const selectedProperty = useMemo(
-    () => properties.find((property) => property.id === Number(propertyId)),
-    [properties, propertyId]
+    () => ownedProperties.find((property) => property.id === Number(propertyId)),
+    [ownedProperties, propertyId]
   );
 
   const primaryTenant = useMemo(
@@ -180,7 +187,7 @@ export default function TransactionsPage() {
   };
 
   useEffect(() => {
-    if (hasAppliedPropertyPreset || properties.length === 0) {
+    if (hasAppliedPropertyPreset || ownedProperties.length === 0) {
       return;
     }
 
@@ -190,7 +197,7 @@ export default function TransactionsPage() {
       return;
     }
 
-    if (!properties.some((property) => String(property.id) === presetPropertyId)) {
+    if (!ownedProperties.some((property) => String(property.id) === presetPropertyId)) {
       setHasAppliedPropertyPreset(true);
       return;
     }
@@ -198,7 +205,7 @@ export default function TransactionsPage() {
     setPropertyId(presetPropertyId);
     setCreateOpen(true);
     setHasAppliedPropertyPreset(true);
-  }, [hasAppliedPropertyPreset, properties, searchParams]);
+  }, [hasAppliedPropertyPreset, ownedProperties, searchParams]);
 
   useEffect(() => {
     if (!selectedProperty) {
@@ -364,10 +371,10 @@ export default function TransactionsPage() {
     setWifiCharge("");
   };
 
-  const hasProperties = properties.length > 0;
+  const hasOwnedProperties = ownedProperties.length > 0;
 
   const handleOpenCreateBill = () => {
-    if (!hasProperties) {
+    if (!hasOwnedProperties) {
       setNoPropertyDialogOpen(true);
       return;
     }
@@ -393,10 +400,10 @@ export default function TransactionsPage() {
         </Card>
       )}
 
-      {!loading && !hasProperties && (
+      {!loading && !hasOwnedProperties && (
         <Card className="border-amber-300/60 bg-amber-50/30">
           <CardContent className="pt-6 text-sm text-amber-700">
-            You have not added a property yet. Add a property first to create bills.
+            You do not have any owned property yet. Add a property you own to create bills.
           </CardContent>
         </Card>
       )}
@@ -476,7 +483,7 @@ export default function TransactionsPage() {
               <Select value={propertyId} onValueChange={handlePropertyChange}>
                 <SelectTrigger><SelectValue placeholder="Select property" /></SelectTrigger>
                 <SelectContent>
-                  {properties.map((property) => (
+                  {ownedProperties.map((property) => (
                     <SelectItem key={property.id} value={String(property.id)}>
                       {property.property_name}
                     </SelectItem>
@@ -647,7 +654,7 @@ export default function TransactionsPage() {
           <DialogHeader>
             <DialogTitle>Cannot Create Bill</DialogTitle>
             <DialogDescription>
-              You have not added a property yet. Please add a property before creating a bill.
+              You do not have any owned property yet. Please add a property you own before creating a bill.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
