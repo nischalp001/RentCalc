@@ -19,6 +19,7 @@ export type PropertyRecord = {
   property_type: string;
   currency: string;
   price: number;
+  desired_rent?: number | null;
   interval: string;
   address?: string | null;
   location?: string | null;
@@ -49,6 +50,7 @@ export type PropertyTenantRecord = {
   tenant_name: string;
   tenant_email?: string | null;
   tenant_phone?: string | null;
+  monthly_rent?: number | null;
   date_joined?: string | null;
   date_end?: string | null;
   status: string;
@@ -73,6 +75,9 @@ export type BillRecord = {
   current_month: string;
   base_rent: number;
   confirmed_rent: number;
+  paid_date?: string | null;
+  payment_method?: string | null;
+  proof_url?: string | null;
   breakdown: {
     rentPerMonth?: number;
     baseRent?: number;
@@ -97,6 +102,7 @@ export type CreatePropertyInput = {
   propertyType: string;
   currency: string;
   price: number;
+  desiredRent: number;
   interval: string;
   location: string;
   rooms: number;
@@ -173,12 +179,66 @@ export type CreatePropertyTenantInput = {
   tenantName: string;
   tenantEmail?: string;
   tenantPhone?: string;
+  monthlyRent?: number;
   dateJoined?: string;
 };
 
 export type CreatePropertyTenantByUserIdInput = {
   propertyId: number;
   tenantAppUserId: string;
+  monthlyRent?: number;
+};
+
+export type BillPaymentEntry = {
+  claimId?: string | null;
+  amount: number;
+  remarks: string;
+  paidAt: string;
+  payer: "tenant" | "owner";
+  remainingAmount: number;
+  proofUrl?: string | null;
+  proofMimeType?: string | null;
+  proofName?: string | null;
+};
+
+export type BillPaymentClaimStatus = "pending" | "verified" | "rejected";
+
+export type BillPaymentClaim = {
+  id: string;
+  amount: number;
+  remarks: string;
+  claimedAt: string;
+  payer: "tenant" | "owner";
+  status: BillPaymentClaimStatus;
+  verifiedAt?: string | null;
+  verifiedBy?: "tenant" | "owner" | null;
+  proofUrl?: string | null;
+  proofMimeType?: string | null;
+  proofName?: string | null;
+};
+
+export type BillPaymentSummary = {
+  totalPaid: number;
+  remainingAmount: number;
+  history: BillPaymentEntry[];
+  pendingClaims: BillPaymentClaim[];
+};
+
+export type SubmitBillPaymentClaimInput = {
+  billId: number;
+  amountPaid: number;
+  remarks?: string;
+  payer: "tenant" | "owner";
+  proofUrl?: string;
+  proofMimeType?: string;
+  proofName?: string;
+};
+
+export type VerifyBillPaymentClaimInput = {
+  billId: number;
+  claimId: string;
+  verifier: "tenant" | "owner";
+  approve?: boolean;
 };
 
 export type ConnectTenantToPropertyByCodeInput = {
@@ -218,6 +278,68 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null;
   }
   return value as Record<string, unknown>;
+}
+
+function asString(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function toBillPaymentEntry(value: unknown): BillPaymentEntry | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const amount = toNonNegativeNumber(record.amount);
+  if (amount <= 0) {
+    return null;
+  }
+
+  const paidAt = asString(record.paidAt, "");
+  const payer = record.payer === "owner" ? "owner" : "tenant";
+
+  return {
+    claimId: asString(record.claimId, "") || null,
+    amount,
+    remarks: asString(record.remarks, "").trim(),
+    paidAt,
+    payer,
+    remainingAmount: toNonNegativeNumber(record.remainingAmount),
+    proofUrl: asString(record.proofUrl, "") || null,
+    proofMimeType: asString(record.proofMimeType, "") || null,
+    proofName: asString(record.proofName, "") || null,
+  };
+}
+
+function toBillPaymentClaim(value: unknown): BillPaymentClaim | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const id = asString(record.id, "").trim();
+  const amount = toNonNegativeNumber(record.amount);
+  if (!id || amount <= 0) {
+    return null;
+  }
+
+  const payer = record.payer === "owner" ? "owner" : "tenant";
+  const status: BillPaymentClaimStatus =
+    record.status === "verified" || record.status === "rejected" ? record.status : "pending";
+
+  return {
+    id,
+    amount,
+    remarks: asString(record.remarks, "").trim(),
+    claimedAt: asString(record.claimedAt, "") || asString(record.paidAt, ""),
+    payer,
+    status,
+    verifiedAt: asString(record.verifiedAt, "") || null,
+    verifiedBy: record.verifiedBy === "owner" || record.verifiedBy === "tenant" ? record.verifiedBy : null,
+    proofUrl: asString(record.proofUrl, "") || null,
+    proofMimeType: asString(record.proofMimeType, "") || null,
+    proofName: asString(record.proofName, "") || null,
+  };
 }
 
 function toUsageBreakdown(value: unknown): BillUsageBreakdown {
@@ -326,6 +448,52 @@ export function getBillSectionSummary(bill: BillRecord): BillSectionSummary {
   };
 }
 
+export function getBillPaymentSummary(bill: BillRecord): BillPaymentSummary {
+  const breakdown = asRecord(bill.breakdown) || {};
+  const legacyHistory = Array.isArray(breakdown.paymentHistory)
+    ? breakdown.paymentHistory.map((entry) => toBillPaymentEntry(entry)).filter(Boolean) as BillPaymentEntry[]
+    : [];
+  const claims = Array.isArray(breakdown.paymentClaims)
+    ? breakdown.paymentClaims.map((claim) => toBillPaymentClaim(claim)).filter(Boolean) as BillPaymentClaim[]
+    : [];
+  const pendingClaims = claims
+    .filter((claim) => claim.status === "pending")
+    .sort((a, b) => +new Date(b.claimedAt || 0) - +new Date(a.claimedAt || 0));
+
+  const claimHistory = claims
+    .filter((claim) => claim.status === "verified")
+    .map((claim) => ({
+      claimId: claim.id,
+      amount: claim.amount,
+      remarks: claim.remarks,
+      paidAt: claim.verifiedAt || claim.claimedAt,
+      payer: claim.payer,
+      remainingAmount: 0,
+      proofUrl: claim.proofUrl || null,
+      proofMimeType: claim.proofMimeType || null,
+      proofName: claim.proofName || null,
+    })) as BillPaymentEntry[];
+
+  const history = [...legacyHistory, ...claimHistory]
+    .sort((a, b) => +new Date(b.paidAt || 0) - +new Date(a.paidAt || 0));
+
+  const fallbackTotalPaid = history.reduce((sum, entry) => sum + entry.amount, 0);
+  const totalPaid = toNonNegativeNumber(breakdown.totalPaid, fallbackTotalPaid);
+  const remainingAmount = Math.max(toNonNegativeNumber(breakdown.remainingAmount, toNonNegativeNumber(bill.total) - totalPaid), 0);
+
+  const normalizedHistory = history.map((entry) => ({
+    ...entry,
+    remainingAmount: toNonNegativeNumber(entry.remainingAmount, Math.max(toNonNegativeNumber(bill.total) - totalPaid, 0)),
+  }));
+
+  return {
+    totalPaid,
+    remainingAmount,
+    history: normalizedHistory,
+    pendingClaims,
+  };
+}
+
 function countWords(value: string) {
   return value.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -401,6 +569,7 @@ function validateCreatePropertyInput(input: CreatePropertyInput) {
   }
 
   assertNonNegativeNumber(input.price, "Price");
+  assertNonNegativeNumber(input.desiredRent, "Desired monthly rent");
   assertNonNegativeNumber(input.rooms, "Rooms");
   assertNonNegativeNumber(input.bedrooms, "Bedrooms");
   assertNonNegativeNumber(input.bathrooms, "Bathrooms");
@@ -580,6 +749,7 @@ export async function createProperty(input: CreatePropertyInput): Promise<Create
       property_type: input.propertyType,
       currency: input.currency,
       price: input.price,
+      desired_rent: input.desiredRent,
       interval: input.interval,
       address: input.location,
       location: input.location,
@@ -724,6 +894,214 @@ export async function fetchBills(filter: BillFilter = {}) {
   return (data || []) as BillRecord[];
 }
 
+export async function fetchBillById(billId: number) {
+  if (!Number.isFinite(billId) || billId <= 0) {
+    throw new Error("Valid bill ID is required.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    throw new Error("You must be logged in to view this bill.");
+  }
+
+  const accessiblePropertyIds = await fetchAccessiblePropertyIds(profileId);
+  if (accessiblePropertyIds.length === 0) {
+    throw new Error("You do not have access to this bill.");
+  }
+
+  const { data, error } = await supabase
+    .from("bills")
+    .select("*, bill_custom_fields(*)")
+    .eq("id", billId)
+    .in("property_id", accessiblePropertyIds)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message || "Failed to fetch bill");
+  }
+  if (!data) {
+    throw new Error("Bill not found.");
+  }
+
+  return data as BillRecord;
+}
+
+export async function uploadBillPaymentEvidence(billId: number, file: File) {
+  if (!Number.isFinite(billId) || billId <= 0) {
+    throw new Error("Valid bill ID is required.");
+  }
+  if (!file) {
+    throw new Error("Evidence file is required.");
+  }
+  const type = file.type || "";
+  if (!(type === "application/pdf" || type.startsWith("image/"))) {
+    throw new Error("Only PDF and image files are supported.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const bucket = getSupabaseStorageBucket();
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const path = `bills/${billId}/payments/${Date.now()}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(bucket)
+    .upload(path, file, {
+      contentType: type || "application/octet-stream",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    throw new Error(uploadError.message || "Failed to upload payment evidence");
+  }
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(bucket).getPublicUrl(path);
+
+  return {
+    url: publicUrl,
+    path,
+    mimeType: type || null,
+    name: file.name || null,
+  };
+}
+
+export async function submitBillPaymentClaim(input: SubmitBillPaymentClaimInput) {
+  if (!Number.isFinite(input.billId) || input.billId <= 0) {
+    throw new Error("Valid bill ID is required.");
+  }
+  if (!Number.isFinite(input.amountPaid) || input.amountPaid <= 0) {
+    throw new Error("Paid amount must be greater than 0.");
+  }
+
+  const bill = await fetchBillById(input.billId);
+  const breakdown = asRecord(bill.breakdown) || {};
+  const existingClaims = Array.isArray(breakdown.paymentClaims)
+    ? breakdown.paymentClaims.map((claim) => toBillPaymentClaim(claim)).filter(Boolean) as BillPaymentClaim[]
+    : [];
+
+  const claimedAt = new Date().toISOString();
+  const nextClaim: BillPaymentClaim = {
+    id: `claim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    amount: input.amountPaid,
+    remarks: input.remarks?.trim() || "",
+    claimedAt,
+    payer: input.payer,
+    status: "pending",
+    verifiedAt: null,
+    verifiedBy: null,
+    proofUrl: input.proofUrl || null,
+    proofMimeType: input.proofMimeType || null,
+    proofName: input.proofName || null,
+  };
+
+  const updatedBreakdown = {
+    ...breakdown,
+    paymentClaims: [...existingClaims, nextClaim],
+  };
+
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase
+    .from("bills")
+    .update({
+      breakdown: updatedBreakdown,
+      payment_method: input.payer,
+      proof_url: input.proofUrl || bill.proof_url || null,
+    })
+    .eq("id", input.billId)
+    .select("*, bill_custom_fields(*)")
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || "Failed to submit payment claim");
+  }
+
+  return data as BillRecord;
+}
+
+export async function verifyBillPaymentClaim(input: VerifyBillPaymentClaimInput) {
+  if (!Number.isFinite(input.billId) || input.billId <= 0) {
+    throw new Error("Valid bill ID is required.");
+  }
+  if (!input.claimId.trim()) {
+    throw new Error("Payment claim ID is required.");
+  }
+
+  const approve = input.approve !== false;
+  const bill = await fetchBillById(input.billId);
+  const breakdown = asRecord(bill.breakdown) || {};
+  const paymentSummary = getBillPaymentSummary(bill);
+
+  const existingClaims = Array.isArray(breakdown.paymentClaims)
+    ? breakdown.paymentClaims.map((claim) => toBillPaymentClaim(claim)).filter(Boolean) as BillPaymentClaim[]
+    : [];
+
+  const claimIndex = existingClaims.findIndex((claim) => claim.id === input.claimId.trim());
+  if (claimIndex < 0) {
+    throw new Error("Payment claim not found.");
+  }
+
+  const claim = existingClaims[claimIndex];
+  if (claim.status !== "pending") {
+    throw new Error("This payment claim has already been processed.");
+  }
+
+  const processedAt = new Date().toISOString();
+  const nextClaims = [...existingClaims];
+  nextClaims[claimIndex] = {
+    ...claim,
+    status: approve ? "verified" : "rejected",
+    verifiedAt: processedAt,
+    verifiedBy: input.verifier,
+  };
+
+  let totalPaid = paymentSummary.totalPaid;
+  let remainingAmount = paymentSummary.remainingAmount;
+  let nextStatus = bill.status;
+  let paidDate = bill.paid_date || null;
+
+  if (approve) {
+    totalPaid = paymentSummary.totalPaid + claim.amount;
+    remainingAmount = Math.max(toNonNegativeNumber(bill.total) - totalPaid, 0);
+    nextStatus =
+      remainingAmount <= 0
+        ? "paid"
+        : bill.status === "overdue"
+          ? "overdue"
+          : "pending";
+    paidDate = nextStatus === "paid" ? processedAt : null;
+  }
+
+  const updatedBreakdown = {
+    ...breakdown,
+    paymentClaims: nextClaims,
+    totalPaid,
+    remainingAmount,
+    lastPaymentDate: approve ? processedAt : breakdown.lastPaymentDate,
+  };
+
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase
+    .from("bills")
+    .update({
+      breakdown: updatedBreakdown,
+      status: nextStatus,
+      paid_date: paidDate,
+      payment_method: approve ? claim.payer : bill.payment_method || null,
+      proof_url: approve ? claim.proofUrl || bill.proof_url || null : bill.proof_url || null,
+    })
+    .eq("id", input.billId)
+    .select("*, bill_custom_fields(*)")
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || "Failed to verify payment claim");
+  }
+
+  return data as BillRecord;
+}
+
 export async function fetchPropertyTenants(propertyId: number) {
   if (!Number.isFinite(propertyId) || propertyId <= 0) {
     throw new Error("Valid property ID is required.");
@@ -752,6 +1130,7 @@ export async function fetchPropertyTenants(propertyId: number) {
 
   return (data || []).map((row) => ({
     ...(row as PropertyTenantRecord),
+    monthly_rent: row.monthly_rent == null ? null : toNonNegativeNumber(row.monthly_rent),
     date_joined: row.date_joined ? adToBs(row.date_joined) : null,
     date_end: row.date_end ? adToBs(row.date_end) : null,
   })) as PropertyTenantRecord[];
@@ -772,6 +1151,9 @@ export async function createPropertyTenant(input: CreatePropertyTenantInput) {
       throw new Error("Tenant email format is invalid.");
     }
   }
+  if (typeof input.monthlyRent === "number") {
+    assertNonNegativeNumber(input.monthlyRent, "Monthly rent");
+  }
 
   const joinedDate = input.dateJoined?.trim() ? bsToAd(input.dateJoined.trim()) : null;
 
@@ -783,6 +1165,7 @@ export async function createPropertyTenant(input: CreatePropertyTenantInput) {
       tenant_name: input.tenantName.trim(),
       tenant_email: input.tenantEmail?.trim() || null,
       tenant_phone: input.tenantPhone?.trim() || null,
+      monthly_rent: typeof input.monthlyRent === "number" ? input.monthlyRent : null,
       date_joined: joinedDate,
       status: "active",
     })
@@ -795,6 +1178,7 @@ export async function createPropertyTenant(input: CreatePropertyTenantInput) {
 
   return {
     ...(data as PropertyTenantRecord),
+    monthly_rent: data.monthly_rent == null ? null : toNonNegativeNumber(data.monthly_rent),
     date_joined: data.date_joined ? adToBs(data.date_joined) : null,
     date_end: data.date_end ? adToBs(data.date_end) : null,
   } as PropertyTenantRecord;
@@ -803,6 +1187,9 @@ export async function createPropertyTenant(input: CreatePropertyTenantInput) {
 export async function createPropertyTenantByUserId(input: CreatePropertyTenantByUserIdInput) {
   if (!Number.isFinite(input.propertyId) || input.propertyId <= 0) {
     throw new Error("Valid property ID is required.");
+  }
+  if (typeof input.monthlyRent === "number") {
+    assertNonNegativeNumber(input.monthlyRent, "Monthly rent");
   }
 
   const tenantAppUserId = input.tenantAppUserId.trim();
@@ -819,10 +1206,27 @@ export async function createPropertyTenantByUserId(input: CreatePropertyTenantBy
   if (!rpcError) {
     const row = (Array.isArray(rpcTenant) ? rpcTenant[0] : rpcTenant) as PropertyTenantRecord | null;
     if (row) {
+      let normalizedRow = row;
+      if (typeof input.monthlyRent === "number" && Number.isFinite(row.id)) {
+        const { data: updatedTenant, error: updateError } = await supabase
+          .from("property_tenants")
+          .update({ monthly_rent: input.monthlyRent })
+          .eq("id", row.id)
+          .select("*")
+          .maybeSingle();
+        if (updateError) {
+          throw new Error(updateError.message || "Failed to save tenant monthly rent");
+        }
+        if (updatedTenant) {
+          normalizedRow = updatedTenant as PropertyTenantRecord;
+        }
+      }
+
       return {
-        ...row,
-        date_joined: row.date_joined ? adToBs(row.date_joined) : null,
-        date_end: row.date_end ? adToBs(row.date_end) : null,
+        ...normalizedRow,
+        monthly_rent: normalizedRow.monthly_rent == null ? null : toNonNegativeNumber(normalizedRow.monthly_rent),
+        date_joined: normalizedRow.date_joined ? adToBs(normalizedRow.date_joined) : null,
+        date_end: normalizedRow.date_end ? adToBs(normalizedRow.date_end) : null,
       } as PropertyTenantRecord;
     }
   } else if (!/connect_tenant_by_app_user_id/i.test(rpcError.message || "")) {
@@ -865,6 +1269,7 @@ export async function createPropertyTenantByUserId(input: CreatePropertyTenantBy
       tenant_name: tenantProfile.name || "Tenant",
       tenant_email: tenantProfile.email || null,
       tenant_phone: tenantProfile.phone || null,
+      monthly_rent: typeof input.monthlyRent === "number" ? input.monthlyRent : null,
       date_joined: new Date().toISOString().slice(0, 10),
       status: "active",
     })
@@ -877,6 +1282,7 @@ export async function createPropertyTenantByUserId(input: CreatePropertyTenantBy
 
   return {
     ...(insertedTenant as PropertyTenantRecord),
+    monthly_rent: insertedTenant.monthly_rent == null ? null : toNonNegativeNumber(insertedTenant.monthly_rent),
     date_joined: insertedTenant.date_joined ? adToBs(insertedTenant.date_joined) : null,
     date_end: insertedTenant.date_end ? adToBs(insertedTenant.date_end) : null,
   } as PropertyTenantRecord;
@@ -960,6 +1366,7 @@ export async function connectTenantToPropertyByCode(
     property: property as Pick<PropertyRecord, "id" | "property_name" | "property_code">,
     tenant: {
       ...(tenant as PropertyTenantRecord),
+      monthly_rent: tenant.monthly_rent == null ? null : toNonNegativeNumber(tenant.monthly_rent),
       date_joined: tenant.date_joined ? adToBs(tenant.date_joined) : null,
       date_end: tenant.date_end ? adToBs(tenant.date_end) : null,
     },
@@ -1008,6 +1415,10 @@ export async function createBill(input: CreateBillInput) {
     wifi,
     internet: wifi,
     others: normalizedOthers,
+    paymentClaims: [] as BillPaymentClaim[],
+    totalPaid: 0,
+    remainingAmount: 0,
+    paymentHistory: [] as BillPaymentEntry[],
   };
 
   const total = toNumber(
@@ -1020,6 +1431,7 @@ export async function createBill(input: CreateBillInput) {
       wifi +
       Object.values(normalizedOthers).reduce((sum, amount) => sum + toNumber(amount), 0)
   );
+  breakdown.remainingAmount = total;
 
   const { data: bill, error } = await supabase
     .from("bills")

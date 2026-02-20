@@ -50,6 +50,7 @@ import {
 const descriptionPreviewWordCount = 70;
 
 const words = (value: string) => value.trim().split(/\s+/).filter(Boolean);
+const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
 
 export default function PropertyDetailPage() {
   const { user } = useUser();
@@ -67,6 +68,7 @@ export default function PropertyDetailPage() {
   const [tenantName, setTenantName] = useState("");
   const [tenantEmail, setTenantEmail] = useState("");
   const [tenantPhone, setTenantPhone] = useState("");
+  const [tenantMonthlyRent, setTenantMonthlyRent] = useState("");
   const [tenantDateJoined, setTenantDateJoined] = useState("");
   const [tenantSubmitting, setTenantSubmitting] = useState(false);
   const [tenantError, setTenantError] = useState<string | null>(null);
@@ -114,21 +116,38 @@ export default function PropertyDetailPage() {
     setTenantName("");
     setTenantEmail("");
     setTenantPhone("");
+    setTenantMonthlyRent("");
     setTenantDateJoined("");
     setTenantUniqueId("");
     setTenantError(null);
     setTenantMode("code");
   };
 
+  const resolveTenantMonthlyRent = () => {
+    const trimmed = tenantMonthlyRent.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      throw new Error("Tenant monthly rent must be a non-negative number.");
+    }
+
+    return parsed;
+  };
+
   const handleAddTenant = async () => {
     setTenantError(null);
     setTenantSubmitting(true);
     try {
+      const monthlyRent = resolveTenantMonthlyRent();
       await createPropertyTenant({
         propertyId: id,
         tenantName,
         tenantEmail,
         tenantPhone,
+        monthlyRent,
         dateJoined: tenantDateJoined,
       });
       setAddTenantOpen(false);
@@ -146,9 +165,11 @@ export default function PropertyDetailPage() {
     setTenantError(null);
     setTenantSubmitting(true);
     try {
+      const monthlyRent = resolveTenantMonthlyRent();
       await createPropertyTenantByUserId({
         propertyId: id,
         tenantAppUserId: tenantUniqueId,
+        monthlyRent,
       });
       setAddTenantOpen(false);
       resetTenantForm();
@@ -226,7 +247,9 @@ export default function PropertyDetailPage() {
   ];
 
   const hasTenants = tenants.length > 0;
-  const tenantToDelete = tenants.find((tenant) => tenant.status === "active") || tenants[0] || null;
+  const activeTenant = tenants.find((tenant) => tenant.status === "active") || tenants[0] || null;
+  const tenantToDelete = activeTenant;
+  const monthlyRent = Number(activeTenant?.monthly_rent ?? property.desired_rent ?? property.price ?? 0);
   const isOwner = property.owner_profile_id === user.profileId;
 
   return (
@@ -271,7 +294,7 @@ export default function PropertyDetailPage() {
               {property.location || property.address || "-"}
             </p>
             <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
-              <span>{property.currency} {Number(property.price || 0).toLocaleString()}/{property.interval}</span>
+              <span>Monthly Rent: NPR {monthlyRent.toLocaleString()}</span>
               <span>{property.bedrooms ?? 0} bed</span>
               <span>{property.bathrooms ?? 0} bath</span>
               <span>{property.sqft ?? 0} sq.ft</span>
@@ -282,11 +305,21 @@ export default function PropertyDetailPage() {
             <TabsList className="w-full justify-start">
               <TabsTrigger value="property-details">Property details</TabsTrigger>
               <TabsTrigger value="investment-details">Investment details</TabsTrigger>
-              <TabsTrigger value="offering">Offering</TabsTrigger>
-              <TabsTrigger value="performance">Performance</TabsTrigger>
             </TabsList>
 
             <TabsContent value="property-details" className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Monthly Rent</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-lg font-semibold">{formatNpr(monthlyRent)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Source: {activeTenant?.monthly_rent != null ? "Tenant rent" : property.desired_rent != null ? "Desired rent" : "Property price"}
+                  </p>
+                </CardContent>
+              </Card>
+
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">Property Description</CardTitle>
@@ -330,22 +363,6 @@ export default function PropertyDetailPage() {
                 </CardContent>
               </Card>
             </TabsContent>
-
-            <TabsContent value="offering">
-              <Card>
-                <CardContent className="pt-6 text-sm text-muted-foreground">
-                  Offering details are coming soon.
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="performance">
-              <Card>
-                <CardContent className="pt-6 text-sm text-muted-foreground">
-                  Performance details are coming soon.
-                </CardContent>
-              </Card>
-            </TabsContent>
           </Tabs>
 
           <Card>
@@ -370,36 +387,41 @@ export default function PropertyDetailPage() {
                       <div key={bill.id} className="rounded-md border p-3 text-sm space-y-1">
                         <div className="font-medium">{bill.tenant_name} - {bill.current_month}</div>
                         <div className="text-muted-foreground capitalize">Status: {bill.status}</div>
-                        <div className="flex justify-between"><span>Rent (per month)</span><span>${sections.rentPerMonth.toFixed(2)}</span></div>
-                        <div className="flex justify-between"><span>Due</span><span>${sections.due.toFixed(2)}</span></div>
-                        <div className="flex justify-between"><span>Penalty (10% of due)</span><span>${sections.penalty.toFixed(2)}</span></div>
+                        <div className="flex justify-between"><span>Rent (per month)</span><span>{formatNpr(sections.rentPerMonth)}</span></div>
+                        <div className="flex justify-between"><span>Due</span><span>{formatNpr(sections.due)}</span></div>
+                        <div className="flex justify-between"><span>Penalty (10% of due)</span><span>{formatNpr(sections.penalty)}</span></div>
                         <div className="text-xs rounded-md border px-2 py-1">
-                          <div className="flex justify-between"><span>Electricity bill</span><span>${sections.electricity.amount.toFixed(2)}</span></div>
+                          <div className="flex justify-between"><span>Electricity bill</span><span>{formatNpr(sections.electricity.amount)}</span></div>
                           <div className="text-muted-foreground">
                             Prev: {sections.electricity.previousUnit} | Current: {sections.electricity.currentUnit} | Rate: {sections.electricity.rate}
                           </div>
                         </div>
                         <div className="text-xs rounded-md border px-2 py-1">
-                          <div className="flex justify-between"><span>Water bill</span><span>${sections.water.amount.toFixed(2)}</span></div>
+                          <div className="flex justify-between"><span>Water bill</span><span>{formatNpr(sections.water.amount)}</span></div>
                           <div className="text-muted-foreground">
                             Prev: {sections.water.previousUnit} | Current: {sections.water.currentUnit} | Rate: {sections.water.rate}
                           </div>
                         </div>
-                        <div className="flex justify-between"><span>Wifi</span><span>${sections.wifi.toFixed(2)}</span></div>
+                        <div className="flex justify-between"><span>Wifi</span><span>{formatNpr(sections.wifi)}</span></div>
                         <div className="text-xs rounded-md border px-2 py-1">
-                          <div className="flex justify-between"><span>Others</span><span>${sections.othersTotal.toFixed(2)}</span></div>
+                          <div className="flex justify-between"><span>Others</span><span>{formatNpr(sections.othersTotal)}</span></div>
                           {sections.others.length > 0 ? (
                             sections.others.map((charge, index) => (
                               <div key={`${bill.id}-${charge.name}-${index}`} className="flex justify-between text-muted-foreground">
                                 <span>{charge.name}</span>
-                                <span>${charge.amount.toFixed(2)}</span>
+                                <span>{formatNpr(charge.amount)}</span>
                               </div>
                             ))
                           ) : (
                             <div className="text-muted-foreground">No additional charges</div>
                           )}
                         </div>
-                        <div className="flex justify-between font-medium"><span>Total</span><span>${sections.total.toFixed(2)}</span></div>
+                        <div className="flex justify-between font-medium"><span>Total</span><span>{formatNpr(sections.total)}</span></div>
+                        <div className="pt-1">
+                          <Button asChild size="sm" variant="outline">
+                            <Link href={`/transactions/${bill.id}`}>View Bill Details</Link>
+                          </Button>
+                        </div>
                       </div>
                     );
                   })}
@@ -441,6 +463,9 @@ export default function PropertyDetailPage() {
                       </div>
                       <div className="text-xs text-muted-foreground">
                         {tenant.tenant_phone || "No phone"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Monthly Rent: {tenant.monthly_rent != null ? formatNpr(Number(tenant.monthly_rent)) : "Not set"}
                       </div>
                       <div className="text-xs text-muted-foreground">
                         Joined: {tenant.date_joined || "N/A"}
@@ -564,6 +589,16 @@ export default function PropertyDetailPage() {
                   Enter the tenant unique ID to connect that user and add them as tenant for this property.
                 </p>
               </div>
+              <div className="space-y-2">
+                <Label>Monthly Rent (NPR)</Label>
+                <Input
+                  min={0}
+                  type="number"
+                  value={tenantMonthlyRent}
+                  onChange={(event) => setTenantMonthlyRent(event.target.value)}
+                  placeholder="e.g. 25000"
+                />
+              </div>
               {tenantError && <p className="text-sm text-destructive">{tenantError}</p>}
               <Button onClick={handleAddTenantByUniqueId} disabled={tenantSubmitting || !tenantUniqueId.trim()}>
                 {tenantSubmitting ? "Connecting..." : "Connect Tenant"}
@@ -586,6 +621,16 @@ export default function PropertyDetailPage() {
               <div className="space-y-2">
                 <Label>Tenant Phone (optional)</Label>
                 <Input value={tenantPhone} onChange={(event) => setTenantPhone(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label>Monthly Rent (NPR)</Label>
+                <Input
+                  min={0}
+                  type="number"
+                  value={tenantMonthlyRent}
+                  onChange={(event) => setTenantMonthlyRent(event.target.value)}
+                  placeholder="e.g. 25000"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Date Joined (optional, Nepali)</Label>

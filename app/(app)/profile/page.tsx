@@ -367,15 +367,12 @@ export default function ProfilePage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="currency">Currency</Label>
-              <Select defaultValue="usd">
+              <Select defaultValue="npr">
                 <SelectTrigger id="currency">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="usd">USD ($)</SelectItem>
-                  <SelectItem value="eur">EUR</SelectItem>
-                  <SelectItem value="gbp">GBP</SelectItem>
-                  <SelectItem value="inr">INR</SelectItem>
+                  <SelectItem value="npr">NPR</SelectItem>
                 </SelectContent>
               </Select>
             </div>

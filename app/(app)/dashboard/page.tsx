@@ -24,6 +24,8 @@ import {
   type PropertyRecord,
 } from "@/lib/rental-data";
 
+const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
+
 export default function DashboardPage() {
   const { user } = useUser();
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
@@ -226,7 +228,7 @@ export default function DashboardPage() {
                   <p className="text-sm text-muted-foreground">Receivable</p>
                   <DollarSign className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : `$${ownerTotals.receivable.toFixed(2)}`}</p>
+                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : formatNpr(ownerTotals.receivable)}</p>
               </CardContent>
             </Card>
           </div>
@@ -246,7 +248,7 @@ export default function DashboardPage() {
                     <div key={bill.id} className="rounded-md border p-3 text-sm">
                       <div className="font-medium">{bill.property_name}</div>
                       <div className="text-muted-foreground">
-                        {bill.tenant_name} | {bill.current_month} | ${Number(bill.total || 0).toFixed(2)} | {bill.status}
+                        {bill.tenant_name} | {bill.current_month} | {formatNpr(Number(bill.total || 0))} | {bill.status}
                       </div>
                     </div>
                   ))}
@@ -299,7 +301,7 @@ export default function DashboardPage() {
                   <p className="text-sm text-muted-foreground">Rent to Pay</p>
                   <DollarSign className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : `$${tenantTotals.rentToPay.toFixed(2)}`}</p>
+                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : formatNpr(tenantTotals.rentToPay)}</p>
               </CardContent>
             </Card>
           </div>
@@ -319,7 +321,7 @@ export default function DashboardPage() {
                     <div key={bill.id} className="rounded-md border p-3 text-sm">
                       <div className="font-medium">{bill.property_name}</div>
                       <div className="text-muted-foreground">
-                        {bill.tenant_name} | {bill.current_month} | ${Number(bill.total || 0).toFixed(2)} | {bill.status}
+                        {bill.tenant_name} | {bill.current_month} | {formatNpr(Number(bill.total || 0))} | {bill.status}
                       </div>
                     </div>
                   ))}

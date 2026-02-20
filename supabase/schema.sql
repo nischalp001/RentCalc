@@ -52,8 +52,9 @@ create table if not exists public.properties (
   property_name text not null,
   name text,
   property_type text not null,
-  currency text not null default 'USD',
+  currency text not null default 'NPR',
   price numeric(12,2) not null,
+  desired_rent numeric(12,2) not null default 0,
   rent text,
   interval text not null default 'monthly',
   address text,
@@ -85,11 +86,13 @@ alter table if exists public.properties add column if not exists car_parking_spa
 alter table if exists public.properties add column if not exists water_supply boolean not null default false;
 alter table if exists public.properties add column if not exists wifi boolean not null default false;
 alter table if exists public.properties add column if not exists furnished_level text not null default 'none';
+alter table if exists public.properties add column if not exists desired_rent numeric(12,2) not null default 0;
 
 -- Normalize legacy negative values before any row updates/backfills.
 update public.properties
 set
   price = greatest(coalesce(price, 0), 0),
+  desired_rent = greatest(coalesce(desired_rent, price, 0), 0),
   rooms = greatest(coalesce(rooms, 0), 0),
   bedrooms = greatest(coalesce(bedrooms, 0), 0),
   bathrooms = greatest(coalesce(bathrooms, 0), 0),
@@ -107,7 +110,8 @@ where
   or dinings < 0
   or livings < 0
   or (sqft is not null and sqft < 0)
-  or car_parking_spaces < 0;
+  or car_parking_spaces < 0
+  or desired_rent < 0;
 
 alter table if exists public.properties add column if not exists property_code text;
 update public.properties
@@ -171,12 +175,15 @@ create table if not exists public.property_tenants (
   tenant_name text not null,
   tenant_email text,
   tenant_phone text,
+  monthly_rent numeric(12,2),
   date_joined date,
   date_end date,
   status text not null default 'active',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table if exists public.property_tenants add column if not exists monthly_rent numeric(12,2);
 
 create table if not exists public.bills (
   id bigint generated always as identity primary key,
@@ -247,6 +254,11 @@ begin
       add constraint properties_price_non_negative check (price >= 0) not valid;
   end if;
 
+  if not exists (select 1 from pg_constraint where conname = 'properties_desired_rent_non_negative') then
+    alter table public.properties
+      add constraint properties_desired_rent_non_negative check (desired_rent >= 0) not valid;
+  end if;
+
   if not exists (select 1 from pg_constraint where conname = 'properties_rooms_non_negative') then
     alter table public.properties
       add constraint properties_rooms_non_negative check (rooms >= 0) not valid;
@@ -290,6 +302,11 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'properties_furnished_level_check') then
     alter table public.properties
       add constraint properties_furnished_level_check check (furnished_level in ('none', 'semi', 'full')) not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'property_tenants_monthly_rent_non_negative') then
+    alter table public.property_tenants
+      add constraint property_tenants_monthly_rent_non_negative check (monthly_rent is null or monthly_rent >= 0) not valid;
   end if;
 end $$;
 

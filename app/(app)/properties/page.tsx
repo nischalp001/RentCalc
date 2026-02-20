@@ -79,7 +79,7 @@ export default function PropertiesPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-lg font-semibold">
-                    {property.currency} {Number(property.price || 0).toLocaleString()}
+                    NPR {Number(property.desired_rent ?? property.price ?? 0).toLocaleString()}
                     <span className="text-sm font-normal text-muted-foreground">/{property.interval}</span>
                   </p>
                   <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">

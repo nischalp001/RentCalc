@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus, Receipt, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Receipt, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,6 +17,7 @@ import {
   fetchBills,
   fetchProperties,
   fetchPropertyTenants,
+  getBillPaymentSummary,
   getBillSectionSummary,
   type BillRecord,
   type PropertyRecord,
@@ -61,6 +63,9 @@ const asNonNegative = (value: string) => {
   return parsed;
 };
 
+const normalizeText = (value: string | null | undefined) => value?.trim().toLowerCase() || "";
+const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
+
 export default function TransactionsPage() {
   const { user } = useUser();
   const searchParams = useSearchParams();
@@ -74,6 +79,8 @@ export default function TransactionsPage() {
   const [noPropertyDialogOpen, setNoPropertyDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [hasAppliedPropertyPreset, setHasAppliedPropertyPreset] = useState(false);
+  const [expandedPropertyId, setExpandedPropertyId] = useState<number | null>(null);
+  const [selectedBillPreview, setSelectedBillPreview] = useState<BillRecord | null>(null);
 
   const [propertyId, setPropertyId] = useState("");
   const [tenantName, setTenantName] = useState("");
@@ -92,6 +99,9 @@ export default function TransactionsPage() {
 
   const [wifiCharge, setWifiCharge] = useState("");
   const [otherCharges, setOtherCharges] = useState<OtherCharge[]>([]);
+  const initializedPropertyIdRef = useRef<number | null>(null);
+  const usageAutofillKeyRef = useRef("");
+  const rentAutofillKeyRef = useRef("");
 
   const preventWheelChange = (event: React.WheelEvent<HTMLInputElement>) => {
     event.currentTarget.blur();
@@ -124,11 +134,32 @@ export default function TransactionsPage() {
     () => properties.filter((property) => property.owner_profile_id === user.profileId),
     [properties, user.profileId]
   );
+  const rentedProperties = useMemo(
+    () => properties.filter((property) => property.owner_profile_id !== user.profileId),
+    [properties, user.profileId]
+  );
+  const ownedPropertyIdSet = useMemo(
+    () => new Set(ownedProperties.map((property) => property.id)),
+    [ownedProperties]
+  );
+  const rentedPropertyIdSet = useMemo(
+    () => new Set(rentedProperties.map((property) => property.id)),
+    [rentedProperties]
+  );
+  const ownedBills = useMemo(
+    () => bills.filter((bill) => ownedPropertyIdSet.has(bill.property_id)),
+    [bills, ownedPropertyIdSet]
+  );
+  const rentedBills = useMemo(
+    () => bills.filter((bill) => rentedPropertyIdSet.has(bill.property_id)),
+    [bills, rentedPropertyIdSet]
+  );
 
   const selectedProperty = useMemo(
     () => ownedProperties.find((property) => property.id === Number(propertyId)),
     [ownedProperties, propertyId]
   );
+  const selectedPropertyId = selectedProperty?.id ?? null;
 
   const primaryTenant = useMemo(
     () => propertyTenants.find((tenant) => tenant.status === "active") || propertyTenants[0] || null,
@@ -169,6 +200,9 @@ export default function TransactionsPage() {
   }, [baseRent, due, penalty, electricityAmount, waterAmount, wifiCharge, otherChargesTotal]);
 
   const resetForm = () => {
+    initializedPropertyIdRef.current = null;
+    usageAutofillKeyRef.current = "";
+    rentAutofillKeyRef.current = "";
     setPropertyId("");
     setPropertyTenants([]);
     setTenantName("");
@@ -208,8 +242,11 @@ export default function TransactionsPage() {
   }, [hasAppliedPropertyPreset, ownedProperties, searchParams]);
 
   useEffect(() => {
-    if (!selectedProperty) {
+    if (!selectedProperty || !selectedPropertyId) {
       setPropertyTenants([]);
+      initializedPropertyIdRef.current = null;
+      usageAutofillKeyRef.current = "";
+      rentAutofillKeyRef.current = "";
       return;
     }
 
@@ -217,7 +254,7 @@ export default function TransactionsPage() {
 
     const loadTenants = async () => {
       try {
-        const tenantData = await fetchPropertyTenants(selectedProperty.id);
+        const tenantData = await fetchPropertyTenants(selectedPropertyId);
         if (cancelled) {
           return;
         }
@@ -239,13 +276,119 @@ export default function TransactionsPage() {
       }
     };
 
-    setBaseRent(String(selectedProperty.price ?? ""));
+    if (initializedPropertyIdRef.current !== selectedPropertyId) {
+      initializedPropertyIdRef.current = selectedPropertyId;
+      usageAutofillKeyRef.current = "";
+      rentAutofillKeyRef.current = "";
+      setBaseRent(String(selectedProperty.desired_rent ?? selectedProperty.price ?? ""));
+      setDue("");
+      setElectricityPreviousUnit("");
+      setElectricityCurrentUnit("");
+      setElectricityRate("");
+      setWaterPreviousUnit("");
+      setWaterCurrentUnit("");
+      setWaterRate("");
+      setWifiCharge("");
+      setOtherCharges([]);
+    }
+
     loadTenants();
 
     return () => {
       cancelled = true;
     };
-  }, [selectedProperty]);
+  }, [selectedPropertyId]);
+
+  const previousBillForTenant = useMemo(() => {
+    if (!selectedPropertyId) {
+      return null;
+    }
+
+    const normalizedTenantEmail = normalizeText(tenantEmail);
+    const normalizedTenantName = normalizeText(tenantName);
+    if (!normalizedTenantEmail && !normalizedTenantName) {
+      return null;
+    }
+
+    return bills.find((bill) => {
+      if (bill.property_id !== selectedPropertyId) {
+        return false;
+      }
+
+      const billEmail = normalizeText(bill.tenant_email);
+      const billName = normalizeText(bill.tenant_name);
+
+      if (normalizedTenantEmail) {
+        if (billEmail) {
+          return billEmail === normalizedTenantEmail;
+        }
+        return Boolean(normalizedTenantName) && billName === normalizedTenantName;
+      }
+
+      return billName === normalizedTenantName;
+    }) || null;
+  }, [bills, selectedPropertyId, tenantEmail, tenantName]);
+
+  const selectedTenantRecord = useMemo(() => {
+    const normalizedTenantEmail = normalizeText(tenantEmail);
+    const normalizedTenantName = normalizeText(tenantName);
+    if (!normalizedTenantEmail && !normalizedTenantName) {
+      return null;
+    }
+
+    return propertyTenants.find((tenant) => {
+      const tenantRecordEmail = normalizeText(tenant.tenant_email);
+      const tenantRecordName = normalizeText(tenant.tenant_name);
+
+      if (normalizedTenantEmail) {
+        if (tenantRecordEmail) {
+          return tenantRecordEmail === normalizedTenantEmail;
+        }
+        return Boolean(normalizedTenantName) && tenantRecordName === normalizedTenantName;
+      }
+
+      return tenantRecordName === normalizedTenantName;
+    }) || null;
+  }, [propertyTenants, tenantEmail, tenantName]);
+
+  useEffect(() => {
+    if (!selectedPropertyId) {
+      return;
+    }
+
+    const tenantKey = normalizeText(tenantEmail) || normalizeText(tenantName);
+    if (!tenantKey) {
+      return;
+    }
+
+    const autofillKey = `${selectedPropertyId}:${tenantKey}`;
+    if (usageAutofillKeyRef.current === autofillKey) {
+      return;
+    }
+    usageAutofillKeyRef.current = autofillKey;
+    if (rentAutofillKeyRef.current !== autofillKey) {
+      rentAutofillKeyRef.current = autofillKey;
+
+      if (selectedTenantRecord?.monthly_rent != null) {
+        setBaseRent(String(selectedTenantRecord.monthly_rent));
+      } else if (previousBillForTenant) {
+        const previousSections = getBillSectionSummary(previousBillForTenant);
+        setBaseRent(String(previousSections.rentPerMonth));
+      } else if (selectedProperty) {
+        setBaseRent(String(selectedProperty.desired_rent ?? selectedProperty.price ?? ""));
+      }
+    }
+
+    if (!previousBillForTenant) {
+      setElectricityPreviousUnit("");
+      setWaterPreviousUnit("");
+      return;
+    }
+
+    const previousSections = getBillSectionSummary(previousBillForTenant);
+    setElectricityPreviousUnit(String(previousSections.electricity.currentUnit));
+    setWaterPreviousUnit(String(previousSections.water.currentUnit));
+  }, [selectedPropertyId, tenantEmail, tenantName, previousBillForTenant, selectedTenantRecord, selectedProperty]);
 
   const updateOtherCharge = (id: string, patch: Partial<OtherCharge>) => {
     setOtherCharges((prev) => prev.map((charge) => (charge.id === id ? { ...charge, ...patch } : charge)));
@@ -361,6 +504,9 @@ export default function TransactionsPage() {
   };
 
   const handlePropertyChange = (value: string) => {
+    initializedPropertyIdRef.current = null;
+    usageAutofillKeyRef.current = "";
+    rentAutofillKeyRef.current = "";
     setPropertyId(value);
     setPropertyTenants([]);
     setTenantName("");
@@ -368,10 +514,55 @@ export default function TransactionsPage() {
     setCurrentMonth("");
     setBaseRent("");
     setDue("");
+    setElectricityPreviousUnit("");
+    setElectricityCurrentUnit("");
+    setElectricityRate("");
+    setWaterPreviousUnit("");
+    setWaterCurrentUnit("");
+    setWaterRate("");
     setWifiCharge("");
+    setOtherCharges([]);
   };
 
   const hasOwnedProperties = ownedProperties.length > 0;
+
+  const mapPropertyTrackers = (entries: PropertyRecord[]) => {
+    return entries.map((property) => {
+      const propertyBills = bills
+        .filter((bill) => bill.property_id === property.id)
+        .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+      const latestBill = propertyBills[0] || null;
+      const latestSections = latestBill ? getBillSectionSummary(latestBill) : null;
+
+      return {
+        property,
+        propertyBills,
+        latestBill,
+        latestSections,
+        tenantName: latestBill?.tenant_name || "No tenant assigned",
+        rentPerMonth: latestSections?.rentPerMonth ?? Number(property.desired_rent ?? property.price ?? 0),
+      };
+    });
+  };
+
+  const ownedPropertyTrackers = useMemo(
+    () => mapPropertyTrackers(ownedProperties),
+    [ownedProperties, bills]
+  );
+  const rentedPropertyTrackers = useMemo(
+    () => mapPropertyTrackers(rentedProperties),
+    [rentedProperties, bills]
+  );
+
+  const selectedBillPreviewSections = useMemo(
+    () => (selectedBillPreview ? getBillSectionSummary(selectedBillPreview) : null),
+    [selectedBillPreview]
+  );
+
+  const selectedBillPreviewPayments = useMemo(
+    () => (selectedBillPreview ? getBillPaymentSummary(selectedBillPreview) : null),
+    [selectedBillPreview]
+  );
 
   const handleOpenCreateBill = () => {
     if (!hasOwnedProperties) {
@@ -412,63 +603,289 @@ export default function TransactionsPage() {
         <Card>
           <CardContent className="pt-6 text-sm text-muted-foreground">Loading bills...</CardContent>
         </Card>
-      ) : bills.length === 0 ? (
-        <Card>
-          <CardContent className="pt-6 text-sm text-muted-foreground">No bills yet. Create the first rent bill.</CardContent>
-        </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {bills.map((bill) => {
-            const sections = getBillSectionSummary(bill);
-            return (
-              <Card key={bill.id}>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Receipt className="h-4 w-4" />
-                    {bill.tenant_name}
-                  </CardTitle>
-                  <p className="text-xs text-muted-foreground">{bill.property_name}</p>
-                </CardHeader>
-                <CardContent className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span>Date</span><span>{bill.current_month}</span></div>
-                  <div className="flex justify-between"><span>Status</span><span className="capitalize">{bill.status}</span></div>
-                  <div className="flex justify-between"><span>Rent (per month)</span><span>${sections.rentPerMonth.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span>Due</span><span>${sections.due.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span>Penalty (10% of due)</span><span>${sections.penalty.toFixed(2)}</span></div>
-                  <div className="rounded-md border px-2 py-1 text-xs">
-                    <div className="flex justify-between"><span>Electricity bill</span><span>${sections.electricity.amount.toFixed(2)}</span></div>
-                    <div className="text-muted-foreground">
-                      Prev: {sections.electricity.previousUnit} | Current: {sections.electricity.currentUnit} | Rate: {sections.electricity.rate}
-                    </div>
-                  </div>
-                  <div className="rounded-md border px-2 py-1 text-xs">
-                    <div className="flex justify-between"><span>Water bill</span><span>${sections.water.amount.toFixed(2)}</span></div>
-                    <div className="text-muted-foreground">
-                      Prev: {sections.water.previousUnit} | Current: {sections.water.currentUnit} | Rate: {sections.water.rate}
-                    </div>
-                  </div>
-                  <div className="flex justify-between"><span>Wifi</span><span>${sections.wifi.toFixed(2)}</span></div>
-                  <div className="rounded-md border px-2 py-1 text-xs">
-                    <div className="flex justify-between"><span>Others</span><span>${sections.othersTotal.toFixed(2)}</span></div>
-                    {sections.others.length > 0 ? (
-                      sections.others.map((charge, index) => (
-                        <div key={`${bill.id}-${charge.name}-${index}`} className="flex justify-between text-muted-foreground">
-                          <span>{charge.name}</span>
-                          <span>${charge.amount.toFixed(2)}</span>
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Bills For Your Property</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {ownedPropertyTrackers.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No owned properties found for tracking.</p>
+              ) : (
+                <div className="space-y-2">
+                  {ownedPropertyTrackers.map((tracker) => (
+                    <div key={`owner-tracker-${tracker.property.id}`} className="rounded-md border p-3">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between text-left"
+                        onClick={() => setExpandedPropertyId((prev) => (prev === tracker.property.id ? null : tracker.property.id))}
+                      >
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">{tracker.property.property_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {tracker.property.location || tracker.property.address || tracker.property.city || "-"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Tenant: {tracker.tenantName} | Rent: {formatNpr(tracker.rentPerMonth)}
+                          </p>
                         </div>
-                      ))
-                    ) : (
-                      <div className="text-muted-foreground">No additional charges</div>
-                    )}
+                        {expandedPropertyId === tracker.property.id ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </button>
+
+                      {expandedPropertyId === tracker.property.id ? (
+                        <div className="mt-3 space-y-2 border-t pt-3">
+                          {tracker.propertyBills.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">No bills created yet for this property.</p>
+                          ) : (
+                            tracker.propertyBills.map((bill) => (
+                              <div key={`owner-tracker-bill-${bill.id}`} className="rounded-md border p-3 text-sm">
+                                <div className="flex items-center justify-between">
+                                  <div className="font-medium">{bill.tenant_name}</div>
+                                  <span className="capitalize">{bill.status}</span>
+                                </div>
+                                <div className="text-xs text-muted-foreground">Bill Date (to be paid): {bill.current_month}</div>
+                                <div className="text-xs text-muted-foreground">Bill Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  Paid Date: {bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}
+                                </div>
+                                <div className="pt-2">
+                                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
+                                    View Bill Popup
+                                  </Button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Bills For Rent You Stay In</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {rentedPropertyTrackers.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No rental properties found for tracking.</p>
+              ) : (
+                <div className="space-y-2">
+                  {rentedPropertyTrackers.map((tracker) => (
+                    <div key={`renter-tracker-${tracker.property.id}`} className="rounded-md border p-3">
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between text-left"
+                        onClick={() => setExpandedPropertyId((prev) => (prev === tracker.property.id ? null : tracker.property.id))}
+                      >
+                        <div className="space-y-1">
+                          <p className="text-sm font-medium">{tracker.property.property_name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {tracker.property.location || tracker.property.address || tracker.property.city || "-"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Tenant: {tracker.tenantName} | Rent: {formatNpr(tracker.rentPerMonth)}
+                          </p>
+                        </div>
+                        {expandedPropertyId === tracker.property.id ? (
+                          <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </button>
+
+                      {expandedPropertyId === tracker.property.id ? (
+                        <div className="mt-3 space-y-2 border-t pt-3">
+                          {tracker.propertyBills.length === 0 ? (
+                            <p className="text-xs text-muted-foreground">No bills found for this rental property.</p>
+                          ) : (
+                            tracker.propertyBills.map((bill) => (
+                              <div key={`renter-tracker-bill-${bill.id}`} className="rounded-md border p-3 text-sm">
+                                <div className="flex items-center justify-between">
+                                  <div className="font-medium">{bill.tenant_name}</div>
+                                  <span className="capitalize">{bill.status}</span>
+                                </div>
+                                <div className="text-xs text-muted-foreground">Bill Date (to be paid): {bill.current_month}</div>
+                                <div className="text-xs text-muted-foreground">Bill Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  Paid Date: {bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}
+                                </div>
+                                <div className="pt-2">
+                                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
+                                    View Bill Popup
+                                  </Button>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {bills.length === 0 ? (
+            <Card>
+              <CardContent className="pt-6 text-sm text-muted-foreground">No bills yet. Create the first rent bill.</CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Your Property Bills</h3>
+                {ownedBills.length === 0 ? (
+                  <Card>
+                    <CardContent className="pt-6 text-sm text-muted-foreground">No bills for your properties yet.</CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {ownedBills.map((bill) => {
+                      const sections = getBillSectionSummary(bill);
+                      return (
+                        <Card key={`owned-${bill.id}`}>
+                          <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-base">
+                              <Receipt className="h-4 w-4" />
+                              {bill.tenant_name}
+                            </CardTitle>
+                            <p className="text-xs text-muted-foreground">{bill.property_name}</p>
+                          </CardHeader>
+                          <CardContent className="space-y-2 text-sm">
+                            <div className="flex justify-between"><span>Date</span><span>{bill.current_month}</span></div>
+                            <div className="flex justify-between"><span>Status</span><span className="capitalize">{bill.status}</span></div>
+                            <div className="flex justify-between"><span>Total</span><span className="font-semibold">{formatNpr(sections.total)}</span></div>
+                            <div className="text-xs text-muted-foreground">Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                            <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
+                              View Bill Popup
+                            </Button>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
-                  <div className="flex justify-between"><span>Total</span><span className="font-semibold">${sections.total.toFixed(2)}</span></div>
-                  <div className="text-xs text-muted-foreground">Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
-                </CardContent>
-              </Card>
-            );
-          })}
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">Rent Bills For Properties You Stay In</h3>
+                {rentedBills.length === 0 ? (
+                  <Card>
+                    <CardContent className="pt-6 text-sm text-muted-foreground">No rent bills found for your rental properties.</CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {rentedBills.map((bill) => {
+                      const sections = getBillSectionSummary(bill);
+                      return (
+                        <Card key={`rented-${bill.id}`}>
+                          <CardHeader>
+                            <CardTitle className="flex items-center gap-2 text-base">
+                              <Receipt className="h-4 w-4" />
+                              {bill.tenant_name}
+                            </CardTitle>
+                            <p className="text-xs text-muted-foreground">{bill.property_name}</p>
+                          </CardHeader>
+                          <CardContent className="space-y-2 text-sm">
+                            <div className="flex justify-between"><span>Date</span><span>{bill.current_month}</span></div>
+                            <div className="flex justify-between"><span>Status</span><span className="capitalize">{bill.status}</span></div>
+                            <div className="flex justify-between"><span>Total</span><span className="font-semibold">{formatNpr(sections.total)}</span></div>
+                            <div className="text-xs text-muted-foreground">Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                            <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
+                              View Bill Popup
+                            </Button>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
+
+      <Dialog open={Boolean(selectedBillPreview)} onOpenChange={(open) => !open && setSelectedBillPreview(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Bill Details Popup</DialogTitle>
+            <DialogDescription>
+              {selectedBillPreview ? `${selectedBillPreview.tenant_name} | ${selectedBillPreview.property_name}` : "Bill details"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBillPreview && selectedBillPreviewSections ? (
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between"><span>Status</span><span className="capitalize">{selectedBillPreview.status}</span></div>
+              <div className="flex justify-between"><span>Bill Date (to be paid)</span><span>{selectedBillPreview.current_month}</span></div>
+              <div className="flex justify-between"><span>Bill Created</span><span>{formatNepaliDateTimeFromAd(selectedBillPreview.created_at)}</span></div>
+              <div className="flex justify-between"><span>Paid Date</span><span>{selectedBillPreview.paid_date ? formatNepaliDateTimeFromAd(selectedBillPreview.paid_date) : "Not paid yet"}</span></div>
+
+              <div className="flex justify-between"><span>Rent (per month)</span><span>{formatNpr(selectedBillPreviewSections.rentPerMonth)}</span></div>
+              <div className="flex justify-between"><span>Due</span><span>{formatNpr(selectedBillPreviewSections.due)}</span></div>
+              <div className="flex justify-between"><span>Penalty</span><span>{formatNpr(selectedBillPreviewSections.penalty)}</span></div>
+
+              <div className="rounded-md border px-2 py-1 text-xs">
+                <div className="flex justify-between"><span>Electricity bill</span><span>{formatNpr(selectedBillPreviewSections.electricity.amount)}</span></div>
+                <div className="text-muted-foreground">
+                  Prev: {selectedBillPreviewSections.electricity.previousUnit} | Current: {selectedBillPreviewSections.electricity.currentUnit} | Rate: {selectedBillPreviewSections.electricity.rate}
+                </div>
+              </div>
+
+              <div className="rounded-md border px-2 py-1 text-xs">
+                <div className="flex justify-between"><span>Water bill</span><span>{formatNpr(selectedBillPreviewSections.water.amount)}</span></div>
+                <div className="text-muted-foreground">
+                  Prev: {selectedBillPreviewSections.water.previousUnit} | Current: {selectedBillPreviewSections.water.currentUnit} | Rate: {selectedBillPreviewSections.water.rate}
+                </div>
+              </div>
+
+              <div className="flex justify-between"><span>Wifi</span><span>{formatNpr(selectedBillPreviewSections.wifi)}</span></div>
+              <div className="rounded-md border px-2 py-1 text-xs">
+                <div className="flex justify-between"><span>Others</span><span>{formatNpr(selectedBillPreviewSections.othersTotal)}</span></div>
+                {selectedBillPreviewSections.others.length > 0 ? (
+                  selectedBillPreviewSections.others.map((charge, index) => (
+                    <div key={`${selectedBillPreview.id}-${charge.name}-${index}`} className="flex justify-between text-muted-foreground">
+                      <span>{charge.name}</span>
+                      <span>{formatNpr(charge.amount)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-muted-foreground">No additional charges</div>
+                )}
+              </div>
+
+              <div className="flex justify-between font-semibold"><span>Total</span><span>{formatNpr(selectedBillPreviewSections.total)}</span></div>
+              {selectedBillPreviewPayments ? (
+                <div className="rounded-md border px-2 py-1 text-xs">
+                  <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(selectedBillPreviewPayments.totalPaid)}</span></div>
+                  <div className="flex justify-between"><span>Remaining</span><span>{formatNpr(selectedBillPreviewPayments.remainingAmount)}</span></div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            {selectedBillPreview ? (
+              <Button asChild variant="outline">
+                <Link href={`/transactions/${selectedBillPreview.id}`}>Open Full Details Page</Link>
+              </Button>
+            ) : null}
+            <Button variant="outline" onClick={() => setSelectedBillPreview(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -554,7 +971,7 @@ export default function TransactionsPage() {
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Electricity Total: ${electricityAmount.toFixed(2)}
+                Electricity Total: {formatNpr(electricityAmount)}
               </p>
             </div>
 
@@ -587,7 +1004,7 @@ export default function TransactionsPage() {
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Water Total: ${waterAmount.toFixed(2)}
+                Water Total: {formatNpr(waterAmount)}
               </p>
             </div>
 
@@ -635,7 +1052,7 @@ export default function TransactionsPage() {
 
             <Card className="bg-muted/40">
               <CardContent className="pt-6 text-sm">
-                Total: <span className="font-semibold">${total.toFixed(2)}</span>
+                Total: <span className="font-semibold">{formatNpr(total)}</span>
               </CardContent>
             </Card>
           </div>

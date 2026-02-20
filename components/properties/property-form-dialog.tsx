@@ -115,8 +115,9 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
 
   const [propertyName, setPropertyName] = useState("");
   const [propertyType, setPropertyType] = useState("flat");
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState("NPR");
   const [price, setPrice] = useState("");
+  const [desiredRent, setDesiredRent] = useState("");
   const [interval, setIntervalValue] = useState("monthly");
   const [location, setLocation] = useState("");
   const [rooms, setRooms] = useState("1");
@@ -143,8 +144,9 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
   const resetForm = () => {
     setPropertyName("");
     setPropertyType("flat");
-    setCurrency("USD");
+    setCurrency("NPR");
     setPrice("");
+    setDesiredRent("");
     setIntervalValue("monthly");
     setLocation("");
     setRooms("1");
@@ -355,6 +357,7 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
     }
 
     const parsedPrice = parseRequiredNonNegative(price, "Price");
+    const parsedDesiredRent = parseRequiredNonNegative(desiredRent, "Desired monthly rent");
     const parsedRooms = parseRequiredNonNegative(rooms, "Rooms");
     const parsedBedrooms = parseRequiredNonNegative(bedrooms, "Bedrooms");
     const parsedBathrooms = parseRequiredNonNegative(bathrooms, "Bathrooms");
@@ -378,6 +381,7 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
       propertyType: propertyType.trim(),
       currency: currency.trim(),
       price: parsedPrice,
+      desiredRent: parsedDesiredRent,
       interval: interval.trim(),
       location: location.trim(),
       rooms: parsedRooms,
@@ -463,7 +467,6 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
             <Select value={currency} onValueChange={setCurrency}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="USD">USD</SelectItem>
                 <SelectItem value="NPR">NPR</SelectItem>
               </SelectContent>
             </Select>
@@ -483,6 +486,19 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
           </div>
 
           <div className="space-y-2">
+            <Label>Desired Monthly Rent</Label>
+            <Input
+              min={0}
+              type="number"
+              value={desiredRent}
+              onWheel={preventWheelChange}
+              onChange={(event) => setDesiredRent(event.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
             <Label>Interval</Label>
             <Select value={interval} onValueChange={setIntervalValue}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -494,6 +510,7 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
               </SelectContent>
             </Select>
           </div>
+          <div />
         </div>
 
         <div className="grid grid-cols-3 gap-3">
