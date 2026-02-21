@@ -196,6 +196,7 @@ export type BillPaymentEntry = {
   paidAt: string;
   payer: "tenant" | "owner";
   remainingAmount: number;
+  surplusAmount: number;
   proofUrl?: string | null;
   proofMimeType?: string | null;
   proofName?: string | null;
@@ -220,6 +221,7 @@ export type BillPaymentClaim = {
 export type BillPaymentSummary = {
   totalPaid: number;
   remainingAmount: number;
+  surplusAmount: number;
   history: BillPaymentEntry[];
   pendingClaims: BillPaymentClaim[];
 };
@@ -284,6 +286,40 @@ function asString(value: unknown, fallback = "") {
   return typeof value === "string" ? value : fallback;
 }
 
+function toBalancePair(remainingValue: unknown, surplusValue: unknown, fallbackDiff = 0) {
+  const rawRemaining = Number(remainingValue);
+  const rawSurplus = Number(surplusValue);
+
+  if (Number.isFinite(rawRemaining) || Number.isFinite(rawSurplus)) {
+    const normalizedRemaining = Number.isFinite(rawRemaining) ? rawRemaining : 0;
+    const normalizedSurplus = Number.isFinite(rawSurplus) ? rawSurplus : 0;
+
+    if (normalizedRemaining < 0) {
+      return {
+        remainingAmount: 0,
+        surplusAmount: Math.max(Math.abs(normalizedRemaining), normalizedSurplus, 0),
+      };
+    }
+
+    return {
+      remainingAmount: Math.max(normalizedRemaining, 0),
+      surplusAmount: Math.max(normalizedSurplus, 0),
+    };
+  }
+
+  if (fallbackDiff >= 0) {
+    return {
+      remainingAmount: fallbackDiff,
+      surplusAmount: 0,
+    };
+  }
+
+  return {
+    remainingAmount: 0,
+    surplusAmount: Math.abs(fallbackDiff),
+  };
+}
+
 function toBillPaymentEntry(value: unknown): BillPaymentEntry | null {
   const record = asRecord(value);
   if (!record) {
@@ -297,6 +333,7 @@ function toBillPaymentEntry(value: unknown): BillPaymentEntry | null {
 
   const paidAt = asString(record.paidAt, "");
   const payer = record.payer === "owner" ? "owner" : "tenant";
+  const balance = toBalancePair(record.remainingAmount, record.surplusAmount);
 
   return {
     claimId: asString(record.claimId, "") || null,
@@ -304,7 +341,8 @@ function toBillPaymentEntry(value: unknown): BillPaymentEntry | null {
     remarks: asString(record.remarks, "").trim(),
     paidAt,
     payer,
-    remainingAmount: toNonNegativeNumber(record.remainingAmount),
+    remainingAmount: balance.remainingAmount,
+    surplusAmount: balance.surplusAmount,
     proofUrl: asString(record.proofUrl, "") || null,
     proofMimeType: asString(record.proofMimeType, "") || null,
     proofName: asString(record.proofName, "") || null,
@@ -469,6 +507,7 @@ export function getBillPaymentSummary(bill: BillRecord): BillPaymentSummary {
       paidAt: claim.verifiedAt || claim.claimedAt,
       payer: claim.payer,
       remainingAmount: 0,
+      surplusAmount: 0,
       proofUrl: claim.proofUrl || null,
       proofMimeType: claim.proofMimeType || null,
       proofName: claim.proofName || null,
@@ -479,16 +518,18 @@ export function getBillPaymentSummary(bill: BillRecord): BillPaymentSummary {
 
   const fallbackTotalPaid = history.reduce((sum, entry) => sum + entry.amount, 0);
   const totalPaid = toNonNegativeNumber(breakdown.totalPaid, fallbackTotalPaid);
-  const remainingAmount = Math.max(toNonNegativeNumber(breakdown.remainingAmount, toNonNegativeNumber(bill.total) - totalPaid), 0);
+  const balanceDiff = toNumber(bill.total) - totalPaid;
+  const normalizedBalance = toBalancePair(breakdown.remainingAmount, breakdown.surplusAmount, balanceDiff);
 
   const normalizedHistory = history.map((entry) => ({
     ...entry,
-    remainingAmount: toNonNegativeNumber(entry.remainingAmount, Math.max(toNonNegativeNumber(bill.total) - totalPaid, 0)),
+    ...toBalancePair(entry.remainingAmount, entry.surplusAmount, balanceDiff),
   }));
 
   return {
     totalPaid,
-    remainingAmount,
+    remainingAmount: normalizedBalance.remainingAmount,
+    surplusAmount: normalizedBalance.surplusAmount,
     history: normalizedHistory,
     pendingClaims,
   };
@@ -1058,18 +1099,21 @@ export async function verifyBillPaymentClaim(input: VerifyBillPaymentClaimInput)
 
   let totalPaid = paymentSummary.totalPaid;
   let remainingAmount = paymentSummary.remainingAmount;
+  let surplusAmount = paymentSummary.surplusAmount;
   let nextStatus = bill.status;
   let paidDate = bill.paid_date || null;
 
   if (approve) {
     totalPaid = paymentSummary.totalPaid + claim.amount;
-    remainingAmount = Math.max(toNonNegativeNumber(bill.total) - totalPaid, 0);
+    const normalizedBalance = toBalancePair(null, null, toNumber(bill.total) - totalPaid);
+    remainingAmount = normalizedBalance.remainingAmount;
+    surplusAmount = normalizedBalance.surplusAmount;
     nextStatus =
-      remainingAmount <= 0
-        ? "paid"
-        : bill.status === "overdue"
+      remainingAmount > 0
+        ? bill.status === "overdue"
           ? "overdue"
-          : "pending";
+          : "pending"
+        : "paid";
     paidDate = nextStatus === "paid" ? processedAt : null;
   }
 
@@ -1078,6 +1122,7 @@ export async function verifyBillPaymentClaim(input: VerifyBillPaymentClaimInput)
     paymentClaims: nextClaims,
     totalPaid,
     remainingAmount,
+    surplusAmount,
     lastPaymentDate: approve ? processedAt : breakdown.lastPaymentDate,
   };
 
@@ -1418,6 +1463,7 @@ export async function createBill(input: CreateBillInput) {
     paymentClaims: [] as BillPaymentClaim[],
     totalPaid: 0,
     remainingAmount: 0,
+    surplusAmount: 0,
     paymentHistory: [] as BillPaymentEntry[],
   };
 

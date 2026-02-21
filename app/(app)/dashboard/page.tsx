@@ -20,6 +20,7 @@ import {
   connectTenantToPropertyByCode,
   fetchBills,
   fetchProperties,
+  getBillPaymentSummary,
   type BillRecord,
   type PropertyRecord,
 } from "@/lib/rental-data";
@@ -103,7 +104,10 @@ export default function DashboardPage() {
     const totalBills = ownedBills.length;
     const pendingBills = ownedBills.filter((bill) => bill.status === "pending").length;
     const overdueBills = ownedBills.filter((bill) => bill.status === "overdue").length;
-    const receivable = ownedBills.reduce((sum, bill) => sum + Number(bill.total || 0), 0);
+    const receivable = ownedBills.reduce((sum, bill) => {
+      const paymentSummary = getBillPaymentSummary(bill);
+      return sum + paymentSummary.remainingAmount - paymentSummary.surplusAmount;
+    }, 0);
     return { totalBills, pendingBills, overdueBills, receivable };
   }, [ownedBills]);
 
@@ -113,7 +117,10 @@ export default function DashboardPage() {
     const overdueBills = rentalBills.filter((bill) => bill.status === "overdue").length;
     const rentToPay = rentalBills
       .filter((bill) => bill.status === "pending" || bill.status === "overdue")
-      .reduce((sum, bill) => sum + Number(bill.total || 0), 0);
+      .reduce((sum, bill) => {
+        const paymentSummary = getBillPaymentSummary(bill);
+        return sum + paymentSummary.remainingAmount - paymentSummary.surplusAmount;
+      }, 0);
     return { totalBills, pendingBills, overdueBills, rentToPay };
   }, [rentalBills]);
 
@@ -246,10 +253,22 @@ export default function DashboardPage() {
                 <div className="space-y-2">
                   {recentOwnedBills.map((bill) => (
                     <div key={bill.id} className="rounded-md border p-3 text-sm">
-                      <div className="font-medium">{bill.property_name}</div>
-                      <div className="text-muted-foreground">
-                        {bill.tenant_name} | {bill.current_month} | {formatNpr(Number(bill.total || 0))} | {bill.status}
-                      </div>
+                      {(() => {
+                        const paymentSummary = getBillPaymentSummary(bill);
+                        return (
+                          <>
+                            <div className="font-medium">{bill.property_name}</div>
+                            <div className="text-muted-foreground">
+                              {bill.tenant_name} | {bill.current_month} | {bill.status}
+                            </div>
+                            <div className="text-muted-foreground">
+                              {paymentSummary.surplusAmount > 0
+                                ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
+                                : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>
@@ -319,10 +338,22 @@ export default function DashboardPage() {
                 <div className="space-y-2">
                   {recentRentalBills.map((bill) => (
                     <div key={bill.id} className="rounded-md border p-3 text-sm">
-                      <div className="font-medium">{bill.property_name}</div>
-                      <div className="text-muted-foreground">
-                        {bill.tenant_name} | {bill.current_month} | {formatNpr(Number(bill.total || 0))} | {bill.status}
-                      </div>
+                      {(() => {
+                        const paymentSummary = getBillPaymentSummary(bill);
+                        return (
+                          <>
+                            <div className="font-medium">{bill.property_name}</div>
+                            <div className="text-muted-foreground">
+                              {bill.tenant_name} | {bill.current_month} | {bill.status}
+                            </div>
+                            <div className="text-muted-foreground">
+                              {paymentSummary.surplusAmount > 0
+                                ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
+                                : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   ))}
                 </div>

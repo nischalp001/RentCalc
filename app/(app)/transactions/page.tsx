@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronRight, Plus, Receipt, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { useUser } from "@/lib/user-context";
 import {
   createBill,
@@ -19,6 +20,9 @@ import {
   fetchPropertyTenants,
   getBillPaymentSummary,
   getBillSectionSummary,
+  submitBillPaymentClaim,
+  uploadBillPaymentEvidence,
+  verifyBillPaymentClaim,
   type BillRecord,
   type PropertyRecord,
   type PropertyTenantRecord,
@@ -65,6 +69,7 @@ const asNonNegative = (value: string) => {
 
 const normalizeText = (value: string | null | undefined) => value?.trim().toLowerCase() || "";
 const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
+type BillPreviewMode = "view" | "pay" | "verify";
 
 export default function TransactionsPage() {
   const { user } = useUser();
@@ -81,6 +86,14 @@ export default function TransactionsPage() {
   const [hasAppliedPropertyPreset, setHasAppliedPropertyPreset] = useState(false);
   const [expandedPropertyId, setExpandedPropertyId] = useState<number | null>(null);
   const [selectedBillPreview, setSelectedBillPreview] = useState<BillRecord | null>(null);
+  const [billPreviewMode, setBillPreviewMode] = useState<BillPreviewMode>("view");
+  const [billPayAmount, setBillPayAmount] = useState("");
+  const [billPayRemarks, setBillPayRemarks] = useState("");
+  const [billPayEvidenceFile, setBillPayEvidenceFile] = useState<File | null>(null);
+  const [billPaySubmitting, setBillPaySubmitting] = useState(false);
+  const [billPayError, setBillPayError] = useState<string | null>(null);
+  const [billVerifyingClaimId, setBillVerifyingClaimId] = useState<string | null>(null);
+  const [billVerifyError, setBillVerifyError] = useState<string | null>(null);
 
   const [propertyId, setPropertyId] = useState("");
   const [tenantName, setTenantName] = useState("");
@@ -137,22 +150,6 @@ export default function TransactionsPage() {
   const rentedProperties = useMemo(
     () => properties.filter((property) => property.owner_profile_id !== user.profileId),
     [properties, user.profileId]
-  );
-  const ownedPropertyIdSet = useMemo(
-    () => new Set(ownedProperties.map((property) => property.id)),
-    [ownedProperties]
-  );
-  const rentedPropertyIdSet = useMemo(
-    () => new Set(rentedProperties.map((property) => property.id)),
-    [rentedProperties]
-  );
-  const ownedBills = useMemo(
-    () => bills.filter((bill) => ownedPropertyIdSet.has(bill.property_id)),
-    [bills, ownedPropertyIdSet]
-  );
-  const rentedBills = useMemo(
-    () => bills.filter((bill) => rentedPropertyIdSet.has(bill.property_id)),
-    [bills, rentedPropertyIdSet]
   );
 
   const selectedProperty = useMemo(
@@ -564,6 +561,144 @@ export default function TransactionsPage() {
     [selectedBillPreview]
   );
 
+  const selectedBillPreviewProperty = useMemo(
+    () => (selectedBillPreview ? properties.find((property) => property.id === selectedBillPreview.property_id) || null : null),
+    [selectedBillPreview, properties]
+  );
+
+  const selectedBillPreviewIsTenantSide = useMemo(
+    () => Boolean(selectedBillPreviewProperty && selectedBillPreviewProperty.owner_profile_id !== user.profileId),
+    [selectedBillPreviewProperty, user.profileId]
+  );
+
+  const resetBillPreviewState = () => {
+    setSelectedBillPreview(null);
+    setBillPreviewMode("view");
+    setBillPayAmount("");
+    setBillPayRemarks("");
+    setBillPayEvidenceFile(null);
+    setBillPayError(null);
+    setBillVerifyError(null);
+    setBillVerifyingClaimId(null);
+  };
+
+  const applyUpdatedBill = (updatedBill: BillRecord) => {
+    setBills((prev) => prev.map((bill) => (bill.id === updatedBill.id ? updatedBill : bill)));
+    setSelectedBillPreview((prev) => {
+      if (!prev || prev.id !== updatedBill.id) {
+        return prev;
+      }
+      return updatedBill;
+    });
+  };
+
+  const openBillPreview = (bill: BillRecord, mode: BillPreviewMode = "view") => {
+    setSelectedBillPreview(bill);
+    setBillPreviewMode(mode);
+    setBillPayRemarks("");
+    setBillPayEvidenceFile(null);
+    setBillPayError(null);
+    setBillVerifyError(null);
+    setBillVerifyingClaimId(null);
+
+    const paymentSummary = getBillPaymentSummary(bill);
+    if (mode === "pay") {
+      setBillPayAmount(paymentSummary.remainingAmount.toFixed(2));
+      return;
+    }
+    setBillPayAmount("");
+  };
+
+  const handleBillEvidenceChange = (file: File | null) => {
+    setBillPayError(null);
+    if (!file) {
+      setBillPayEvidenceFile(null);
+      return;
+    }
+
+    const supported = file.type === "application/pdf" || file.type.startsWith("image/");
+    if (!supported) {
+      setBillPayError("Only PDF and image evidence files are supported.");
+      setBillPayEvidenceFile(null);
+      return;
+    }
+
+    setBillPayEvidenceFile(file);
+  };
+
+  const handleSubmitBillPaymentClaim = async () => {
+    if (!selectedBillPreview || !selectedBillPreviewPayments || !selectedBillPreviewIsTenantSide) {
+      return;
+    }
+
+    setBillPayError(null);
+    setBillPaySubmitting(true);
+
+    try {
+      const parsedAmount = Number(billPayAmount.trim());
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+        throw new Error("Paid amount must be greater than 0.");
+      }
+
+      let evidencePayload: {
+        url: string;
+        mimeType: string | null;
+        name: string | null;
+      } | null = null;
+
+      if (billPayEvidenceFile) {
+        const uploaded = await uploadBillPaymentEvidence(selectedBillPreview.id, billPayEvidenceFile);
+        evidencePayload = {
+          url: uploaded.url,
+          mimeType: uploaded.mimeType,
+          name: uploaded.name,
+        };
+      }
+
+      const updated = await submitBillPaymentClaim({
+        billId: selectedBillPreview.id,
+        amountPaid: parsedAmount,
+        remarks: billPayRemarks.trim(),
+        payer: "tenant",
+        proofUrl: evidencePayload?.url,
+        proofMimeType: evidencePayload?.mimeType || undefined,
+        proofName: evidencePayload?.name || undefined,
+      });
+
+      applyUpdatedBill(updated);
+      setBillPreviewMode("view");
+      setBillPayAmount("");
+      setBillPayRemarks("");
+      setBillPayEvidenceFile(null);
+    } catch (caughtError) {
+      setBillPayError(caughtError instanceof Error ? caughtError.message : "Failed to submit payment claim");
+    } finally {
+      setBillPaySubmitting(false);
+    }
+  };
+
+  const handleVerifyBillPaymentClaim = async (claimId: string) => {
+    if (!selectedBillPreview || selectedBillPreviewIsTenantSide) {
+      return;
+    }
+
+    setBillVerifyError(null);
+    setBillVerifyingClaimId(claimId);
+    try {
+      const updated = await verifyBillPaymentClaim({
+        billId: selectedBillPreview.id,
+        claimId,
+        verifier: "owner",
+        approve: true,
+      });
+      applyUpdatedBill(updated);
+    } catch (caughtError) {
+      setBillVerifyError(caughtError instanceof Error ? caughtError.message : "Failed to verify payment claim");
+    } finally {
+      setBillVerifyingClaimId(null);
+    }
+  };
+
   const handleOpenCreateBill = () => {
     if (!hasOwnedProperties) {
       setNoPropertyDialogOpen(true);
@@ -644,20 +779,35 @@ export default function TransactionsPage() {
                           ) : (
                             tracker.propertyBills.map((bill) => (
                               <div key={`owner-tracker-bill-${bill.id}`} className="rounded-md border p-3 text-sm">
-                                <div className="flex items-center justify-between">
-                                  <div className="font-medium">{bill.tenant_name}</div>
-                                  <span className="capitalize">{bill.status}</span>
-                                </div>
-                                <div className="text-xs text-muted-foreground">Bill Date (to be paid): {bill.current_month}</div>
-                                <div className="text-xs text-muted-foreground">Bill Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  Paid Date: {bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}
-                                </div>
-                                <div className="pt-2">
-                                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
-                                    View Bill Popup
-                                  </Button>
-                                </div>
+                                {(() => {
+                                  const paymentSummary = getBillPaymentSummary(bill);
+                                  return (
+                                    <>
+                                      <div className="flex items-center justify-between">
+                                        <div className="font-medium">{bill.tenant_name}</div>
+                                        <span className="capitalize">{bill.status}</span>
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">Bill Date (to be paid): {bill.current_month}</div>
+                                      <div className="text-xs text-muted-foreground">Bill Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                                      <div className="text-xs text-muted-foreground">
+                                        Paid Date: {bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">
+                                        {paymentSummary.surplusAmount > 0
+                                          ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
+                                          : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
+                                      </div>
+                                      <div className="flex flex-wrap gap-2 pt-2">
+                                        <Button type="button" size="sm" variant="outline" onClick={() => openBillPreview(bill, "view")}>
+                                          View Bill Popup
+                                        </Button>
+                                        <Button type="button" size="sm" onClick={() => openBillPreview(bill, "verify")}>
+                                          Verify
+                                        </Button>
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                               </div>
                             ))
                           )}
@@ -709,20 +859,35 @@ export default function TransactionsPage() {
                           ) : (
                             tracker.propertyBills.map((bill) => (
                               <div key={`renter-tracker-bill-${bill.id}`} className="rounded-md border p-3 text-sm">
-                                <div className="flex items-center justify-between">
-                                  <div className="font-medium">{bill.tenant_name}</div>
-                                  <span className="capitalize">{bill.status}</span>
-                                </div>
-                                <div className="text-xs text-muted-foreground">Bill Date (to be paid): {bill.current_month}</div>
-                                <div className="text-xs text-muted-foreground">Bill Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
-                                <div className="text-xs text-muted-foreground">
-                                  Paid Date: {bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}
-                                </div>
-                                <div className="pt-2">
-                                  <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
-                                    View Bill Popup
-                                  </Button>
-                                </div>
+                                {(() => {
+                                  const paymentSummary = getBillPaymentSummary(bill);
+                                  return (
+                                    <>
+                                      <div className="flex items-center justify-between">
+                                        <div className="font-medium">{bill.tenant_name}</div>
+                                        <span className="capitalize">{bill.status}</span>
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">Bill Date (to be paid): {bill.current_month}</div>
+                                      <div className="text-xs text-muted-foreground">Bill Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                                      <div className="text-xs text-muted-foreground">
+                                        Paid Date: {bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}
+                                      </div>
+                                      <div className="text-xs text-muted-foreground">
+                                        {paymentSummary.surplusAmount > 0
+                                          ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
+                                          : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
+                                      </div>
+                                      <div className="flex flex-wrap gap-2 pt-2">
+                                        <Button type="button" size="sm" variant="outline" onClick={() => openBillPreview(bill, "view")}>
+                                          View Bill Popup
+                                        </Button>
+                                        <Button type="button" size="sm" onClick={() => openBillPreview(bill, "pay")}>
+                                          Pay Bill
+                                        </Button>
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                               </div>
                             ))
                           )}
@@ -739,83 +904,18 @@ export default function TransactionsPage() {
             <Card>
               <CardContent className="pt-6 text-sm text-muted-foreground">No bills yet. Create the first rent bill.</CardContent>
             </Card>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold">Your Property Bills</h3>
-                {ownedBills.length === 0 ? (
-                  <Card>
-                    <CardContent className="pt-6 text-sm text-muted-foreground">No bills for your properties yet.</CardContent>
-                  </Card>
-                ) : (
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {ownedBills.map((bill) => {
-                      const sections = getBillSectionSummary(bill);
-                      return (
-                        <Card key={`owned-${bill.id}`}>
-                          <CardHeader>
-                            <CardTitle className="flex items-center gap-2 text-base">
-                              <Receipt className="h-4 w-4" />
-                              {bill.tenant_name}
-                            </CardTitle>
-                            <p className="text-xs text-muted-foreground">{bill.property_name}</p>
-                          </CardHeader>
-                          <CardContent className="space-y-2 text-sm">
-                            <div className="flex justify-between"><span>Date</span><span>{bill.current_month}</span></div>
-                            <div className="flex justify-between"><span>Status</span><span className="capitalize">{bill.status}</span></div>
-                            <div className="flex justify-between"><span>Total</span><span className="font-semibold">{formatNpr(sections.total)}</span></div>
-                            <div className="text-xs text-muted-foreground">Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
-                            <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
-                              View Bill Popup
-                            </Button>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <h3 className="text-sm font-semibold">Rent Bills For Properties You Stay In</h3>
-                {rentedBills.length === 0 ? (
-                  <Card>
-                    <CardContent className="pt-6 text-sm text-muted-foreground">No rent bills found for your rental properties.</CardContent>
-                  </Card>
-                ) : (
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                    {rentedBills.map((bill) => {
-                      const sections = getBillSectionSummary(bill);
-                      return (
-                        <Card key={`rented-${bill.id}`}>
-                          <CardHeader>
-                            <CardTitle className="flex items-center gap-2 text-base">
-                              <Receipt className="h-4 w-4" />
-                              {bill.tenant_name}
-                            </CardTitle>
-                            <p className="text-xs text-muted-foreground">{bill.property_name}</p>
-                          </CardHeader>
-                          <CardContent className="space-y-2 text-sm">
-                            <div className="flex justify-between"><span>Date</span><span>{bill.current_month}</span></div>
-                            <div className="flex justify-between"><span>Status</span><span className="capitalize">{bill.status}</span></div>
-                            <div className="flex justify-between"><span>Total</span><span className="font-semibold">{formatNpr(sections.total)}</span></div>
-                            <div className="text-xs text-muted-foreground">Created: {formatNepaliDateTimeFromAd(bill.created_at)}</div>
-                            <Button type="button" size="sm" variant="outline" onClick={() => setSelectedBillPreview(bill)}>
-                              View Bill Popup
-                            </Button>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+          ) : null}
         </div>
       )}
 
-      <Dialog open={Boolean(selectedBillPreview)} onOpenChange={(open) => !open && setSelectedBillPreview(null)}>
+      <Dialog
+        open={Boolean(selectedBillPreview)}
+        onOpenChange={(open) => {
+          if (!open) {
+            resetBillPreviewState();
+          }
+        }}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Bill Details Popup</DialogTitle>
@@ -866,10 +966,143 @@ export default function TransactionsPage() {
 
               <div className="flex justify-between font-semibold"><span>Total</span><span>{formatNpr(selectedBillPreviewSections.total)}</span></div>
               {selectedBillPreviewPayments ? (
-                <div className="rounded-md border px-2 py-1 text-xs">
-                  <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(selectedBillPreviewPayments.totalPaid)}</span></div>
-                  <div className="flex justify-between"><span>Remaining</span><span>{formatNpr(selectedBillPreviewPayments.remainingAmount)}</span></div>
-                </div>
+                <>
+                  <div className="space-y-2 rounded-md border px-2 py-2 text-xs">
+                    <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(selectedBillPreviewPayments.totalPaid)}</span></div>
+                    <div className="flex justify-between">
+                      <span>{selectedBillPreviewPayments.surplusAmount > 0 ? "Surplus" : "Remaining"}</span>
+                      <span>
+                        {formatNpr(
+                          selectedBillPreviewPayments.surplusAmount > 0
+                            ? selectedBillPreviewPayments.surplusAmount
+                            : selectedBillPreviewPayments.remainingAmount
+                        )}
+                      </span>
+                    </div>
+                    {selectedBillPreviewIsTenantSide ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          setBillPreviewMode("pay");
+                          if (!billPayAmount.trim()) {
+                            setBillPayAmount(selectedBillPreviewPayments.remainingAmount.toFixed(2));
+                          }
+                        }}
+                      >
+                        Pay Bill
+                      </Button>
+                    ) : (
+                      <Button type="button" size="sm" onClick={() => setBillPreviewMode("verify")}>
+                        Verify Payments
+                      </Button>
+                    )}
+                  </div>
+
+                  {selectedBillPreviewIsTenantSide && billPreviewMode === "pay" ? (
+                    <div className="space-y-2 rounded-md border px-2 py-2 text-xs">
+                      <p className="text-muted-foreground">
+                        Suggested amount is the current remaining balance. You can edit it before submitting.
+                      </p>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Amount Paid (NPR)</Label>
+                        <Input
+                          min={0}
+                          type="number"
+                          value={billPayAmount}
+                          onChange={(event) => setBillPayAmount(event.target.value)}
+                          placeholder="e.g. 5000"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Remarks</Label>
+                        <Textarea
+                          value={billPayRemarks}
+                          onChange={(event) => setBillPayRemarks(event.target.value)}
+                          placeholder="Optional notes about this payment"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Evidence (optional)</Label>
+                        <Input
+                          type="file"
+                          accept="application/pdf,image/*"
+                          onChange={(event) => handleBillEvidenceChange(event.target.files?.[0] || null)}
+                        />
+                      </div>
+                      {billPayError ? <p className="text-sm text-destructive">{billPayError}</p> : null}
+                      <Button type="button" size="sm" onClick={handleSubmitBillPaymentClaim} disabled={billPaySubmitting}>
+                        {billPaySubmitting ? "Saving..." : "Submit Claim"}
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  <div className="space-y-2 rounded-md border px-2 py-2 text-xs">
+                    <p className="font-medium">Pending Payment Claims</p>
+                    {selectedBillPreviewPayments.pendingClaims.length === 0 ? (
+                      <p className="text-muted-foreground">No pending payment claims.</p>
+                    ) : (
+                      selectedBillPreviewPayments.pendingClaims.map((claim) => (
+                        <div key={claim.id} className="rounded-md border px-2 py-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">{formatNpr(claim.amount)}</span>
+                            <span className="capitalize">{claim.payer}</span>
+                          </div>
+                          <div className="text-muted-foreground">Claimed: {formatNepaliDateTimeFromAd(claim.claimedAt)}</div>
+                          {claim.remarks ? <div className="text-muted-foreground">Remarks: {claim.remarks}</div> : null}
+                          {claim.proofUrl ? (
+                            <a href={claim.proofUrl} target="_blank" rel="noreferrer" className="underline">
+                              View Evidence
+                            </a>
+                          ) : null}
+                          {!selectedBillPreviewIsTenantSide ? (
+                            <div className="pt-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                onClick={() => handleVerifyBillPaymentClaim(claim.id)}
+                                disabled={billVerifyingClaimId === claim.id}
+                              >
+                                {billVerifyingClaimId === claim.id ? "Verifying..." : "Verify"}
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="pt-2 text-muted-foreground">Waiting for owner verification.</div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                    {billVerifyError ? <p className="text-sm text-destructive">{billVerifyError}</p> : null}
+                  </div>
+
+                  <div className="space-y-2 rounded-md border px-2 py-2 text-xs">
+                    <p className="font-medium">Payment History</p>
+                    {selectedBillPreviewPayments.history.length === 0 ? (
+                      <p className="text-muted-foreground">No payment history yet.</p>
+                    ) : (
+                      selectedBillPreviewPayments.history.map((entry, index) => (
+                        <div key={`history-${selectedBillPreview.id}-${index}`} className="rounded-md border px-2 py-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">{formatNpr(entry.amount)}</span>
+                            <span className="capitalize">{entry.payer}</span>
+                          </div>
+                          <div className="text-muted-foreground">Paid: {formatNepaliDateTimeFromAd(entry.paidAt)}</div>
+                          <div className="text-muted-foreground">
+                            {entry.surplusAmount > 0
+                              ? `Surplus: ${formatNpr(entry.surplusAmount)}`
+                              : `Remaining: ${formatNpr(entry.remainingAmount)}`}
+                          </div>
+                          {entry.remarks ? <div className="text-muted-foreground">Remarks: {entry.remarks}</div> : null}
+                          {entry.proofUrl ? (
+                            <a href={entry.proofUrl} target="_blank" rel="noreferrer" className="underline">
+                              View Evidence
+                            </a>
+                          ) : null}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
               ) : null}
             </div>
           ) : null}
@@ -880,7 +1113,7 @@ export default function TransactionsPage() {
                 <Link href={`/transactions/${selectedBillPreview.id}`}>Open Full Details Page</Link>
               </Button>
             ) : null}
-            <Button variant="outline" onClick={() => setSelectedBillPreview(null)}>
+            <Button variant="outline" onClick={resetBillPreviewState}>
               Close
             </Button>
           </DialogFooter>

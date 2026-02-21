@@ -257,12 +257,21 @@ export default function BillDetailPage() {
         <CardContent className="space-y-2 text-sm">
           <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(paymentSummary.totalPaid)}</span></div>
           <div className="flex justify-between font-semibold">
-            <span>Remaining Amount</span>
-            <span>{formatNpr(paymentSummary.remainingAmount)}</span>
+            <span>{paymentSummary.surplusAmount > 0 ? "Surplus Amount" : "Remaining Amount"}</span>
+            <span>
+              {formatNpr(paymentSummary.surplusAmount > 0 ? paymentSummary.surplusAmount : paymentSummary.remainingAmount)}
+            </span>
           </div>
           {isTenantSide ? (
             <div className="pt-2">
-              <Button onClick={() => setPayOpen(true)}>Pay</Button>
+              <Button
+                onClick={() => {
+                  setAmountPaid(paymentSummary.remainingAmount.toFixed(2));
+                  setPayOpen(true);
+                }}
+              >
+                Pay
+              </Button>
             </div>
           ) : (
             <p className="pt-2 text-xs text-muted-foreground">
@@ -334,7 +343,11 @@ export default function BillDetailPage() {
                     <span className="capitalize">{entry.payer}</span>
                   </div>
                   <div className="text-xs text-muted-foreground">Paid At: {formatNepaliDateTimeFromAd(entry.paidAt)}</div>
-                  <div className="text-xs text-muted-foreground">Remaining: {formatNpr(entry.remainingAmount)}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {entry.surplusAmount > 0
+                      ? `Surplus: ${formatNpr(entry.surplusAmount)}`
+                      : `Remaining: ${formatNpr(entry.remainingAmount)}`}
+                  </div>
                   {entry.remarks ? <div className="text-xs text-muted-foreground">Remarks: {entry.remarks}</div> : null}
                   {entry.proofUrl ? (
                     <div className="pt-1">
