@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Receipt, DollarSign, Plus, Link2 } from "lucide-react";
+import { Building2, DollarSign, Plus, Link2, MapPin } from "lucide-react";
 import { PropertyFormDialog } from "@/components/properties/property-form-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,6 +27,8 @@ import {
 } from "@/lib/rental-data";
 
 const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
+const maxShortcutCards = 4;
+const maxRecentBills = 4;
 
 export default function DashboardPage() {
   const { user } = useUser();
@@ -91,41 +94,45 @@ export default function DashboardPage() {
   );
 
   const recentOwnedBills = useMemo(
-    () => [...ownedBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, 5),
+    () => [...ownedBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, maxRecentBills),
     [ownedBills]
   );
 
   const recentRentalBills = useMemo(
-    () => [...rentalBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, 5),
+    () => [...rentalBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, maxRecentBills),
     [rentalBills]
   );
 
   const ownerTotals = useMemo(() => {
-    const totalBills = ownedBills.length;
-    const pendingBills = ownedBills.filter((bill) => bill.status === "pending").length;
-    const overdueBills = ownedBills.filter((bill) => bill.status === "overdue").length;
     const receivable = ownedBills.reduce((sum, bill) => {
       const paymentSummary = getBillPaymentSummary(bill);
       return sum + paymentSummary.remainingAmount - paymentSummary.surplusAmount;
     }, 0);
-    return { totalBills, pendingBills, overdueBills, receivable };
+    return { receivable };
   }, [ownedBills]);
 
   const tenantTotals = useMemo(() => {
-    const totalBills = rentalBills.length;
-    const pendingBills = rentalBills.filter((bill) => bill.status === "pending").length;
-    const overdueBills = rentalBills.filter((bill) => bill.status === "overdue").length;
     const rentToPay = rentalBills
       .filter((bill) => bill.status === "pending" || bill.status === "overdue")
       .reduce((sum, bill) => {
         const paymentSummary = getBillPaymentSummary(bill);
         return sum + paymentSummary.remainingAmount - paymentSummary.surplusAmount;
       }, 0);
-    return { totalBills, pendingBills, overdueBills, rentToPay };
+    return { rentToPay };
   }, [rentalBills]);
 
   const hasOwnerSection = ownedProperties.length > 0;
   const hasTenantSection = rentalProperties.length > 0;
+
+  const sortedOwnedProperties = useMemo(
+    () => [...ownedProperties].sort((a, b) => b.id - a.id),
+    [ownedProperties]
+  );
+
+  const sortedRentalProperties = useMemo(
+    () => [...rentalProperties].sort((a, b) => b.id - a.id),
+    [rentalProperties]
+  );
 
   const resetConnectDialog = () => {
     setConnectPropertyCode("");
@@ -154,14 +161,92 @@ export default function DashboardPage() {
     }
   };
 
+  const renderShortcutCards = (entries: PropertyRecord[], emptyMessage: string) => {
+    if (entries.length === 0) {
+      return (
+        <Card>
+          <CardContent className="pt-6 text-sm text-muted-foreground">{emptyMessage}</CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <div className="space-y-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {entries.slice(0, maxShortcutCards).map((property) => {
+            const image = property.property_images?.[0]?.url || "/placeholder.svg";
+            return (
+              <Link key={property.id} href={`/properties/${property.id}`} className="group">
+                <Card className="h-full overflow-hidden transition-all hover:border-primary/30 hover:shadow-md">
+                  <div className="h-28 w-full overflow-hidden">
+                    <img src={image} alt={property.property_name} className="h-full w-full object-cover" />
+                  </div>
+                  <CardHeader className="space-y-1 pb-2">
+                    <CardTitle className="line-clamp-1 text-sm">{property.property_name}</CardTitle>
+                    <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <MapPin className="h-3 w-3" />
+                      {property.location || property.address || property.city || "-"}
+                    </p>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <p className="text-sm font-semibold">
+                      NPR {Number(property.desired_rent ?? property.price ?? 0).toLocaleString()}
+                      <span className="text-xs font-normal text-muted-foreground">/{property.interval}</span>
+                    </p>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+        {entries.length > maxShortcutCards && (
+          <Button asChild variant="ghost" className="px-0 text-sm">
+            <Link href="/properties">View all properties</Link>
+          </Button>
+        )}
+      </div>
+    );
+  };
+
+  const renderRecentBills = (entries: BillRecord[], emptyMessage: string) => {
+    if (entries.length === 0) {
+      return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
+    }
+
+    return (
+      <div className="space-y-2">
+        {entries.map((bill) => {
+          const paymentSummary = getBillPaymentSummary(bill);
+          return (
+            <Link
+              key={bill.id}
+              href={`/transactions/${bill.id}`}
+              className="block rounded-md border p-3 text-sm transition-colors hover:bg-muted/30"
+            >
+              <div className="font-medium">{bill.property_name}</div>
+              <div className="text-muted-foreground">
+                {bill.current_month} | {bill.status}
+              </div>
+              <div className="text-muted-foreground">
+                {paymentSummary.surplusAmount > 0
+                  ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
+                  : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold lg:text-2xl">Dashboard</h1>
           <p className="text-sm text-muted-foreground">Live overview from Supabase</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={() => setAddPropertyOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Add Property
@@ -193,173 +278,85 @@ export default function DashboardPage() {
         </Card>
       )}
 
-      {hasOwnerSection && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold">Owned Portfolio</h2>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Owned Properties</p>
-                  <Building2 className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : ownedProperties.length}</p>
-              </CardContent>
-            </Card>
+      {!loading && (hasOwnerSection || hasTenantSection) && (
+        <div className="space-y-8">
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold">Portfolio Overview</h2>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">Owned Properties</p>
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold">{ownedProperties.length}</p>
+                </CardContent>
+              </Card>
 
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Bills Issued</p>
-                  <Receipt className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : ownerTotals.totalBills}</p>
-              </CardContent>
-            </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">Rented Properties</p>
+                    <Building2 className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold">{rentalProperties.length}</p>
+                </CardContent>
+              </Card>
 
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Pending/Overdue</p>
-                  <Receipt className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">
-                  {loading ? "..." : `${ownerTotals.pendingBills}/${ownerTotals.overdueBills}`}
-                </p>
-              </CardContent>
-            </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">Receivable</p>
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold">{formatNpr(ownerTotals.receivable)}</p>
+                </CardContent>
+              </Card>
 
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Receivable</p>
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : formatNpr(ownerTotals.receivable)}</p>
-              </CardContent>
-            </Card>
+              <Card>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm text-muted-foreground">Rent to Pay</p>
+                    <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <p className="mt-2 text-2xl font-semibold">{formatNpr(tenantTotals.rentToPay)}</p>
+                </CardContent>
+              </Card>
+            </div>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Recent Bills (Owned Properties)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <p className="text-sm text-muted-foreground">Loading...</p>
-              ) : recentOwnedBills.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No bills created for your owned properties yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {recentOwnedBills.map((bill) => (
-                    <div key={bill.id} className="rounded-md border p-3 text-sm">
-                      {(() => {
-                        const paymentSummary = getBillPaymentSummary(bill);
-                        return (
-                          <>
-                            <div className="font-medium">{bill.property_name}</div>
-                            <div className="text-muted-foreground">
-                              {bill.tenant_name} | {bill.current_month} | {bill.status}
-                            </div>
-                            <div className="text-muted-foreground">
-                              {paymentSummary.surplusAmount > 0
-                                ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
-                                : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {hasTenantSection && (
-        <div className="space-y-4">
-          <h2 className="text-lg font-semibold">Rental Portfolio</h2>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Rental Properties</p>
-                  <Building2 className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : rentalProperties.length}</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Total Bills</p>
-                  <Receipt className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : tenantTotals.totalBills}</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Pending/Overdue</p>
-                  <Receipt className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">
-                  {loading ? "..." : `${tenantTotals.pendingBills}/${tenantTotals.overdueBills}`}
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm text-muted-foreground">Rent to Pay</p>
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                </div>
-                <p className="mt-2 text-2xl font-semibold">{loading ? "..." : formatNpr(tenantTotals.rentToPay)}</p>
-              </CardContent>
-            </Card>
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold">Owned Property Shortcuts</h2>
+            {renderShortcutCards(sortedOwnedProperties, "No owned properties found.")}
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Recent Bills (Rental Properties)</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loading ? (
-                <p className="text-sm text-muted-foreground">Loading...</p>
-              ) : recentRentalBills.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No bills found for your rental properties yet.</p>
-              ) : (
-                <div className="space-y-2">
-                  {recentRentalBills.map((bill) => (
-                    <div key={bill.id} className="rounded-md border p-3 text-sm">
-                      {(() => {
-                        const paymentSummary = getBillPaymentSummary(bill);
-                        return (
-                          <>
-                            <div className="font-medium">{bill.property_name}</div>
-                            <div className="text-muted-foreground">
-                              {bill.tenant_name} | {bill.current_month} | {bill.status}
-                            </div>
-                            <div className="text-muted-foreground">
-                              {paymentSummary.surplusAmount > 0
-                                ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
-                                : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold">Rented Property Shortcuts</h2>
+            {renderShortcutCards(sortedRentalProperties, "No rented properties found.")}
+          </div>
+
+          <div className="space-y-4">
+            <h2 className="text-lg font-semibold">Recent Activity</h2>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Recent Bills (Owned)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {renderRecentBills(recentOwnedBills, "No bills created for your owned properties yet.")}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Recent Bills (Rented)</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {renderRecentBills(recentRentalBills, "No bills found for your rental properties yet.")}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </div>
       )}
 

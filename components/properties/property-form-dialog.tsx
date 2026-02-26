@@ -3,7 +3,6 @@
 import { useMemo, useState, type WheelEvent } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -14,7 +13,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { createProperty, type CreatePropertyInput } from "@/lib/rental-data";
@@ -115,27 +113,11 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
 
   const [propertyName, setPropertyName] = useState("");
   const [propertyType, setPropertyType] = useState("flat");
-  const [currency, setCurrency] = useState("NPR");
-  const [price, setPrice] = useState("");
-  const [desiredRent, setDesiredRent] = useState("");
+  const [monthlyRent, setMonthlyRent] = useState("");
   const [interval, setIntervalValue] = useState("monthly");
   const [location, setLocation] = useState("");
-  const [rooms, setRooms] = useState("1");
-  const [bedrooms, setBedrooms] = useState("1");
-  const [bathrooms, setBathrooms] = useState("1");
-  const [kitchens, setKitchens] = useState("1");
-  const [dinings, setDinings] = useState("1");
-  const [livings, setLivings] = useState("1");
   const [sqft, setSqft] = useState("");
   const [description, setDescription] = useState("");
-
-  const [bikeParking, setBikeParking] = useState(false);
-  const [carParking, setCarParking] = useState(false);
-  const [carParkingSpaces, setCarParkingSpaces] = useState("0");
-  const [waterSupply, setWaterSupply] = useState(false);
-  const [wifi, setWifi] = useState(false);
-  const [furnishedLevel, setFurnishedLevel] = useState<"none" | "semi" | "full">("none");
-  const [otherServicesCsv, setOtherServicesCsv] = useState("");
 
   const [images, setImages] = useState<ImageEntry[]>([createImageEntry()]);
 
@@ -144,26 +126,11 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
   const resetForm = () => {
     setPropertyName("");
     setPropertyType("flat");
-    setCurrency("NPR");
-    setPrice("");
-    setDesiredRent("");
+    setMonthlyRent("");
     setIntervalValue("monthly");
     setLocation("");
-    setRooms("1");
-    setBedrooms("1");
-    setBathrooms("1");
-    setKitchens("1");
-    setDinings("1");
-    setLivings("1");
     setSqft("");
     setDescription("");
-    setBikeParking(false);
-    setCarParking(false);
-    setCarParkingSpaces("0");
-    setWaterSupply(false);
-    setWifi(false);
-    setFurnishedLevel("none");
-    setOtherServicesCsv("");
     setImages([createImageEntry()]);
     setError(null);
     setErrorOpen(false);
@@ -331,7 +298,6 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
     if (!propertyName.trim()) throw new Error("Property name is required.");
     if (!location.trim()) throw new Error("Location is required.");
     if (!propertyType.trim()) throw new Error("Property type is required.");
-    if (!currency.trim()) throw new Error("Currency is required.");
     if (!interval.trim()) throw new Error("Interval is required.");
 
     if (!description.trim()) throw new Error("Description is required.");
@@ -356,49 +322,32 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
       throw new Error("At least one image is required.");
     }
 
-    const parsedPrice = parseRequiredNonNegative(price, "Price");
-    const parsedDesiredRent = parseRequiredNonNegative(desiredRent, "Desired monthly rent");
-    const parsedRooms = parseRequiredNonNegative(rooms, "Rooms");
-    const parsedBedrooms = parseRequiredNonNegative(bedrooms, "Bedrooms");
-    const parsedBathrooms = parseRequiredNonNegative(bathrooms, "Bathrooms");
-    const parsedKitchens = parseRequiredNonNegative(kitchens, "Kitchens");
-    const parsedDinings = parseRequiredNonNegative(dinings, "Dinings");
-    const parsedLivings = parseRequiredNonNegative(livings, "Livings");
+    const parsedMonthlyRent = parseRequiredNonNegative(monthlyRent, "Monthly rent");
     const parsedSqft = parseOptionalNonNegative(sqft, "Square feet");
-
-    let parsedCarParkingSpaces = 0;
-    if (carParking) {
-      parsedCarParkingSpaces = parseRequiredNonNegative(carParkingSpaces, "Car parking spaces");
-    }
-
-    const otherServices = otherServicesCsv
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
 
     return {
       propertyName: propertyName.trim(),
       propertyType: propertyType.trim(),
-      currency: currency.trim(),
-      price: parsedPrice,
-      desiredRent: parsedDesiredRent,
+      currency: "NPR",
+      price: parsedMonthlyRent,
+      desiredRent: parsedMonthlyRent,
       interval: interval.trim(),
       location: location.trim(),
-      rooms: parsedRooms,
-      bedrooms: parsedBedrooms,
-      bathrooms: parsedBathrooms,
-      kitchens: parsedKitchens,
-      dinings: parsedDinings,
-      livings: parsedLivings,
+      rooms: 0,
+      bedrooms: 0,
+      bathrooms: 0,
+      kitchens: 0,
+      dinings: 0,
+      livings: 0,
       sqft: parsedSqft,
       description: description.trim(),
-      bikeParking,
-      carParking,
-      carParkingSpaces: parsedCarParkingSpaces,
-      waterSupply,
-      wifi,
-      furnishedLevel,
-      otherServices,
+      bikeParking: false,
+      carParking: false,
+      carParkingSpaces: 0,
+      waterSupply: false,
+      wifi: false,
+      furnishedLevel: "none",
+      otherServices: [],
       ownerProfileId: user.profileId || "",
       ownerName: user.name || "",
       ownerEmail: user.email || "",
@@ -448,8 +397,8 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <Label>Property Type</Label>
+          <div className="space-y-2 col-span-2">
+            <Label>Type</Label>
             <Select value={propertyType} onValueChange={setPropertyType}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -461,43 +410,19 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
               </SelectContent>
             </Select>
           </div>
-
-          <div className="space-y-2">
-            <Label>Currency</Label>
-            <Select value={currency} onValueChange={setCurrency}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="NPR">NPR</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-2">
-            <Label>Price</Label>
+            <Label>Monthly Rent</Label>
             <Input
               min={0}
               type="number"
-              value={price}
+              value={monthlyRent}
               onWheel={preventWheelChange}
-              onChange={(event) => setPrice(event.target.value)}
+              onChange={(event) => setMonthlyRent(event.target.value)}
             />
           </div>
-
-          <div className="space-y-2">
-            <Label>Desired Monthly Rent</Label>
-            <Input
-              min={0}
-              type="number"
-              value={desiredRent}
-              onWheel={preventWheelChange}
-              onChange={(event) => setDesiredRent(event.target.value)}
-            />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
           <div className="space-y-2">
             <Label>Interval</Label>
             <Select value={interval} onValueChange={setIntervalValue}>
@@ -510,120 +435,11 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
               </SelectContent>
             </Select>
           </div>
-          <div />
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div className="space-y-2">
-            <Label>Rooms</Label>
-            <Input min={0} type="number" value={rooms} onWheel={preventWheelChange} onChange={(event) => setRooms(event.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Bedrooms</Label>
-            <Input min={0} type="number" value={bedrooms} onWheel={preventWheelChange} onChange={(event) => setBedrooms(event.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Bathrooms</Label>
-            <Input min={0} type="number" value={bathrooms} onWheel={preventWheelChange} onChange={(event) => setBathrooms(event.target.value)} />
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <div className="space-y-2">
-            <Label>Kitchens</Label>
-            <Input min={0} type="number" value={kitchens} onWheel={preventWheelChange} onChange={(event) => setKitchens(event.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Dinings</Label>
-            <Input min={0} type="number" value={dinings} onWheel={preventWheelChange} onChange={(event) => setDinings(event.target.value)} />
-          </div>
-          <div className="space-y-2">
-            <Label>Livings</Label>
-            <Input min={0} type="number" value={livings} onWheel={preventWheelChange} onChange={(event) => setLivings(event.target.value)} />
-          </div>
         </div>
 
         <div className="space-y-2">
           <Label>Square Feet (optional)</Label>
           <Input min={0} type="number" value={sqft} onWheel={preventWheelChange} onChange={(event) => setSqft(event.target.value)} />
-        </div>
-
-        <div className="space-y-3">
-          <Label>Preloaded Services</Label>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={bikeParking} onCheckedChange={(checked) => setBikeParking(checked === true)} />
-              <span>Bike Parking</span>
-            </label>
-
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={carParking}
-                onCheckedChange={(checked) => {
-                  const enabled = checked === true;
-                  setCarParking(enabled);
-                  if (!enabled) {
-                    setCarParkingSpaces("0");
-                  }
-                }}
-              />
-              <span>Car Parking</span>
-            </label>
-
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={waterSupply} onCheckedChange={(checked) => setWaterSupply(checked === true)} />
-              <span>Water Supply</span>
-            </label>
-
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox checked={wifi} onCheckedChange={(checked) => setWifi(checked === true)} />
-              <span>WiFi</span>
-            </label>
-          </div>
-
-          <div className="space-y-2">
-            <Label>Car Parking Spaces</Label>
-            <Input
-              min={0}
-              type="number"
-              value={carParkingSpaces}
-              disabled={!carParking}
-              onWheel={preventWheelChange}
-              onChange={(event) => setCarParkingSpaces(event.target.value)}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label>Furnished</Label>
-            <RadioGroup
-              value={furnishedLevel}
-              onValueChange={(value) => setFurnishedLevel(value as "none" | "semi" | "full")}
-              className="grid grid-cols-1 gap-2 sm:grid-cols-3"
-            >
-              <label className="flex items-center gap-2 text-sm">
-                <RadioGroupItem value="none" />
-                <span>No Furnished</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <RadioGroupItem value="semi" />
-                <span>Semi Furnished</span>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <RadioGroupItem value="full" />
-                <span>Full Furnished</span>
-              </label>
-            </RadioGroup>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <Label>Other Services (optional, comma separated)</Label>
-          <Input
-            value={otherServicesCsv}
-            onChange={(event) => setOtherServicesCsv(event.target.value)}
-            placeholder="balcony, generator backup"
-          />
         </div>
 
         <div className="space-y-2">

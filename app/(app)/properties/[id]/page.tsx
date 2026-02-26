@@ -200,8 +200,12 @@ export default function PropertyDetailPage() {
 
     try {
       await deletePropertyTenant(tenantToDelete.id);
-      const updated = await fetchPropertyTenants(id);
-      setTenants(updated);
+      const [updatedTenants, updatedBills] = await Promise.all([
+        fetchPropertyTenants(id),
+        fetchBills({ propertyId: id }),
+      ]);
+      setTenants(updatedTenants);
+      setBills(updatedBills);
       closeDeleteDialog();
     } catch (caughtError) {
       setDeleteError(caughtError instanceof Error ? caughtError.message : "Failed to delete tenant");
@@ -657,7 +661,7 @@ export default function PropertyDetailPage() {
             <DialogTitle>{deleteStep === 1 ? "Warning" : "Confirm Tenant Deletion"}</DialogTitle>
             <DialogDescription>
               {deleteStep === 1
-                ? "Deleting a tenant will remove their manual tenant record for this property."
+                ? "Deleting a tenant will remove the tenant and reset all bills for this property."
                 : `This action is permanent. Click confirm only if you want to delete ${tenantToDelete?.tenant_name || "this tenant"} now.`}
             </DialogDescription>
           </DialogHeader>

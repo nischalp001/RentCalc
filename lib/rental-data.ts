@@ -610,7 +610,7 @@ function validateCreatePropertyInput(input: CreatePropertyInput) {
   }
 
   assertNonNegativeNumber(input.price, "Price");
-  assertNonNegativeNumber(input.desiredRent, "Desired monthly rent");
+  assertNonNegativeNumber(input.desiredRent, "Monthly rent");
   assertNonNegativeNumber(input.rooms, "Rooms");
   assertNonNegativeNumber(input.bedrooms, "Bedrooms");
   assertNonNegativeNumber(input.bathrooms, "Bathrooms");
@@ -1424,6 +1424,28 @@ export async function deletePropertyTenant(tenantId: number) {
   }
 
   const supabase = getSupabaseBrowserClient();
+  const { data: tenant, error: tenantLookupError } = await supabase
+    .from("property_tenants")
+    .select("id, property_id")
+    .eq("id", tenantId)
+    .maybeSingle();
+
+  if (tenantLookupError) {
+    throw new Error(tenantLookupError.message || "Failed to resolve tenant");
+  }
+  if (!tenant) {
+    throw new Error("Tenant not found.");
+  }
+
+  const { error: billsDeleteError } = await supabase
+    .from("bills")
+    .delete()
+    .eq("property_id", tenant.property_id);
+
+  if (billsDeleteError) {
+    throw new Error(billsDeleteError.message || "Failed to reset property bills");
+  }
+
   const { error } = await supabase.from("property_tenants").delete().eq("id", tenantId);
 
   if (error) {
