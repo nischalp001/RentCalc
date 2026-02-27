@@ -418,12 +418,22 @@ export default function PropertyDetailPage() {
             Back to Properties
           </Link>
         </Button>
-        {isOwner && !hasTenants && (
-          <Button className="h-12 px-6 text-base font-semibold shadow-sm" onClick={openAddTenantDialog}>
-            <Plus className="mr-2 h-5 w-5" />
-            Add Tenant
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {isOwner && hasTenants && (
+            <Button asChild className="h-12 px-6 text-base font-semibold shadow-sm">
+              <Link href={`/transactions?propertyId=${id}`}>
+                <Plus className="mr-2 h-5 w-5" />
+                Add Bill
+              </Link>
+            </Button>
+          )}
+          {isOwner && !hasTenants && (
+            <Button className="h-12 px-6 text-base font-semibold shadow-sm" onClick={openAddTenantDialog}>
+              <Plus className="mr-2 h-5 w-5" />
+              Add Tenant
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-3">
