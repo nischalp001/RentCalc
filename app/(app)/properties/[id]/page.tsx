@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   MapPin,
@@ -37,6 +37,7 @@ import { useUser } from "@/lib/user-context";
 import {
   createPropertyTenant,
   createPropertyTenantByUserId,
+  deleteProperty,
   deletePropertyTenant,
   fetchBills,
   fetchProperties,
@@ -55,6 +56,7 @@ const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
 export default function PropertyDetailPage() {
   const { user } = useUser();
   const params = useParams();
+  const router = useRouter();
   const id = Number(params.id);
 
   const [property, setProperty] = useState<PropertyRecord | null>(null);
@@ -79,6 +81,11 @@ export default function PropertyDetailPage() {
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletePropertyOpen, setDeletePropertyOpen] = useState(false);
+  const [deletePropertyStep, setDeletePropertyStep] = useState<1 | 2>(1);
+  const [deletePropertyConfirmationText, setDeletePropertyConfirmationText] = useState("");
+  const [deletePropertySubmitting, setDeletePropertySubmitting] = useState(false);
+  const [deletePropertyError, setDeletePropertyError] = useState<string | null>(null);
 
   const propertyCode = useMemo(
     () => (property?.property_code && /^\d{10}$/.test(property.property_code) ? property.property_code : ""),
@@ -211,6 +218,35 @@ export default function PropertyDetailPage() {
       setDeleteError(caughtError instanceof Error ? caughtError.message : "Failed to delete tenant");
     } finally {
       setDeleteSubmitting(false);
+    }
+  };
+
+  const closeDeletePropertyDialog = () => {
+    setDeletePropertyOpen(false);
+    setDeletePropertyStep(1);
+    setDeletePropertyConfirmationText("");
+    setDeletePropertyError(null);
+    setDeletePropertySubmitting(false);
+  };
+
+  const handleDeleteProperty = async () => {
+    if (!property) {
+      setDeletePropertyError("Property not found.");
+      return;
+    }
+
+    setDeletePropertyError(null);
+    setDeletePropertySubmitting(true);
+
+    try {
+      await deleteProperty(property.id);
+      closeDeletePropertyDialog();
+      router.push("/properties");
+      router.refresh();
+    } catch (caughtError) {
+      setDeletePropertyError(caughtError instanceof Error ? caughtError.message : "Failed to delete property");
+    } finally {
+      setDeletePropertySubmitting(false);
     }
   };
 
@@ -358,6 +394,31 @@ export default function PropertyDetailPage() {
                   </div>
                 </CardContent>
               </Card>
+
+              {isOwner && (
+                <Card className="border-destructive/40">
+                  <CardHeader>
+                    <CardTitle className="text-base text-destructive">Property Actions</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <p className="text-sm text-muted-foreground">
+                      Deleting this property removes all tenants and bills linked to it.
+                    </p>
+                    <Button
+                      variant="destructive"
+                      onClick={() => {
+                        setDeletePropertyError(null);
+                        setDeletePropertyStep(1);
+                        setDeletePropertyConfirmationText("");
+                        setDeletePropertyOpen(true);
+                      }}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Delete Property
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
             </TabsContent>
 
             <TabsContent value="investment-details">
@@ -675,6 +736,51 @@ export default function PropertyDetailPage() {
             ) : (
               <Button variant="destructive" onClick={handleDeleteTenant} disabled={deleteSubmitting}>
                 {deleteSubmitting ? "Deleting..." : "Confirm Delete"}
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deletePropertyOpen} onOpenChange={(open) => (open ? setDeletePropertyOpen(true) : closeDeletePropertyDialog())}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{deletePropertyStep === 1 ? "Warning" : "Confirm Property Deletion"}</DialogTitle>
+            <DialogDescription>
+              {deletePropertyStep === 1
+                ? "Deleting this property is permanent and will remove all related tenants and bills."
+                : `Type "${property.property_name}" to confirm this deletion.`}
+            </DialogDescription>
+          </DialogHeader>
+
+          {deletePropertyStep === 2 && (
+            <div className="space-y-2">
+              <Label htmlFor="delete-property-confirmation">Property name confirmation</Label>
+              <Input
+                id="delete-property-confirmation"
+                value={deletePropertyConfirmationText}
+                onChange={(event) => setDeletePropertyConfirmationText(event.target.value)}
+                placeholder={property.property_name}
+              />
+            </div>
+          )}
+
+          {deletePropertyError && <p className="text-sm text-destructive">{deletePropertyError}</p>}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeDeletePropertyDialog}>Cancel</Button>
+            {deletePropertyStep === 1 ? (
+              <Button onClick={() => setDeletePropertyStep(2)}>Continue</Button>
+            ) : (
+              <Button
+                variant="destructive"
+                onClick={handleDeleteProperty}
+                disabled={
+                  deletePropertySubmitting ||
+                  deletePropertyConfirmationText.trim() !== property.property_name.trim()
+                }
+              >
+                {deletePropertySubmitting ? "Deleting..." : "Confirm Delete Property"}
               </Button>
             )}
           </DialogFooter>

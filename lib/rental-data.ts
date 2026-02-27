@@ -1418,6 +1418,57 @@ export async function connectTenantToPropertyByCode(
   };
 }
 
+export async function deleteProperty(propertyId: number) {
+  if (!Number.isFinite(propertyId) || propertyId <= 0) {
+    throw new Error("Valid property ID is required.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    throw new Error("Your profile is not ready yet. Please sign in again.");
+  }
+
+  const { data: property, error: propertyLookupError } = await supabase
+    .from("properties")
+    .select("id, owner_profile_id")
+    .eq("id", propertyId)
+    .maybeSingle();
+
+  if (propertyLookupError) {
+    throw new Error(propertyLookupError.message || "Failed to resolve property");
+  }
+  if (!property) {
+    throw new Error("Property not found.");
+  }
+  if (property.owner_profile_id !== profileId) {
+    throw new Error("Only the property owner can delete this property.");
+  }
+
+  const { data: propertyImages } = await supabase
+    .from("property_images")
+    .select("path")
+    .eq("property_id", propertyId);
+  const imagePaths = (propertyImages || [])
+    .map((image) => image.path)
+    .filter((path): path is string => typeof path === "string" && path.trim().length > 0);
+
+  if (imagePaths.length > 0) {
+    const bucket = getSupabaseStorageBucket();
+    await supabase.storage.from(bucket).remove(imagePaths);
+  }
+
+  const { error } = await supabase
+    .from("properties")
+    .delete()
+    .eq("id", propertyId)
+    .eq("owner_profile_id", profileId);
+
+  if (error) {
+    throw new Error(error.message || "Failed to delete property");
+  }
+}
+
 export async function deletePropertyTenant(tenantId: number) {
   if (!Number.isFinite(tenantId) || tenantId <= 0) {
     throw new Error("Valid tenant ID is required.");
