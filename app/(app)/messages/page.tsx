@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   MessageCircle,
   Send,
@@ -25,6 +26,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
@@ -50,6 +52,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { getTodayBsDate } from "@/lib/date-utils";
+import {
+  approveOwnerPendingRequest,
+  fetchOwnerPendingApprovalRequests,
+  fetchProperties,
+  fetchTenantPendingConnectionRequests,
+  rejectOwnerPendingRequest,
+  respondToTenantInviteRequest,
+  type OwnerApprovalRequest,
+  type TenantInviteRequest,
+} from "@/lib/rental-data";
 
 // Mock messages data
 const mockMessages: Record<
@@ -113,7 +126,7 @@ const mockMessages: Record<
 };
 
 export default function MessagesPage() {
-  const { connections, addConnection, updateConnectionStatus } = useUser();
+  const { user, connections, addConnection, updateConnectionStatus } = useUser();
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
   const [messageInput, setMessageInput] = useState("");
   const [addPersonOpen, setAddPersonOpen] = useState(false);
@@ -121,9 +134,21 @@ export default function MessagesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [newPersonId, setNewPersonId] = useState("");
   const [newPersonRole, setNewPersonRole] = useState<ConnectionRole>("tenant");
+  const [tenantInviteRequests, setTenantInviteRequests] = useState<TenantInviteRequest[]>([]);
+  const [ownerApprovalRequests, setOwnerApprovalRequests] = useState<OwnerApprovalRequest[]>([]);
+  const [pendingRequestsLoading, setPendingRequestsLoading] = useState(false);
+  const [pendingRequestsError, setPendingRequestsError] = useState<string | null>(null);
+  const [requestActionSubmitting, setRequestActionSubmitting] = useState<string | null>(null);
+  const [ownerApprovalOpen, setOwnerApprovalOpen] = useState(false);
+  const [selectedOwnerRequest, setSelectedOwnerRequest] = useState<OwnerApprovalRequest | null>(null);
+  const [ownerApprovalRent, setOwnerApprovalRent] = useState("");
+  const [ownerApprovalDateJoined, setOwnerApprovalDateJoined] = useState("");
+  const [ownerApprovalError, setOwnerApprovalError] = useState<string | null>(null);
 
   const activeConnections = connections.filter((c) => c.status === "active");
   const pendingConnections = connections.filter((c) => c.status === "pending");
+  const totalPendingRequestCount =
+    pendingConnections.length + tenantInviteRequests.length + ownerApprovalRequests.length;
 
   const landlords = activeConnections.filter((c) => c.role === "landlord");
   const tenants = activeConnections.filter((c) => c.role === "tenant");
@@ -157,6 +182,111 @@ export default function MessagesPage() {
 
   const handleAcceptRequest = (id: string) => {
     updateConnectionStatus(id, "active");
+  };
+
+  const loadPendingRequests = useCallback(async () => {
+    setPendingRequestsLoading(true);
+    setPendingRequestsError(null);
+    try {
+      const tenantRequests = await fetchTenantPendingConnectionRequests();
+      const properties = await fetchProperties();
+      const ownedProperties = properties.filter((property) => property.owner_profile_id === user.profileId);
+      const ownerRequestsPerProperty = await Promise.all(
+        ownedProperties.map((property) => fetchOwnerPendingApprovalRequests(property.id))
+      );
+      setTenantInviteRequests(tenantRequests);
+      setOwnerApprovalRequests(ownerRequestsPerProperty.flat());
+    } catch (caughtError) {
+      setPendingRequestsError(caughtError instanceof Error ? caughtError.message : "Failed to load pending requests");
+    } finally {
+      setPendingRequestsLoading(false);
+    }
+  }, [user.profileId]);
+
+  useEffect(() => {
+    if (!user.profileId) {
+      setTenantInviteRequests([]);
+      setOwnerApprovalRequests([]);
+      return;
+    }
+    void loadPendingRequests();
+  }, [loadPendingRequests, user.profileId]);
+
+  const handleRespondTenantInvite = async (requestId: number, approve: boolean) => {
+    const key = `tenant-${requestId}-${approve ? "approve" : "reject"}`;
+    setRequestActionSubmitting(key);
+    setPendingRequestsError(null);
+    try {
+      await respondToTenantInviteRequest(requestId, approve);
+      await loadPendingRequests();
+    } catch (caughtError) {
+      setPendingRequestsError(caughtError instanceof Error ? caughtError.message : "Failed to submit request response");
+    } finally {
+      setRequestActionSubmitting(null);
+    }
+  };
+
+  const openOwnerApprovalDialog = (request: OwnerApprovalRequest) => {
+    setSelectedOwnerRequest(request);
+    setOwnerApprovalRent("");
+    setOwnerApprovalDateJoined(getTodayBsDate());
+    setOwnerApprovalError(null);
+    setOwnerApprovalOpen(true);
+  };
+
+  const closeOwnerApprovalDialog = () => {
+    setOwnerApprovalOpen(false);
+    setSelectedOwnerRequest(null);
+    setOwnerApprovalRent("");
+    setOwnerApprovalDateJoined("");
+    setOwnerApprovalError(null);
+  };
+
+  const handleApproveOwnerRequest = async () => {
+    if (!selectedOwnerRequest) {
+      setOwnerApprovalError("Request not found.");
+      return;
+    }
+    const parsedRent = Number(ownerApprovalRent.trim());
+    if (!Number.isFinite(parsedRent) || parsedRent < 0) {
+      setOwnerApprovalError("Monthly rent must be a non-negative number.");
+      return;
+    }
+    if (!ownerApprovalDateJoined.trim()) {
+      setOwnerApprovalError("Date joined is required.");
+      return;
+    }
+
+    const key = `owner-${selectedOwnerRequest.id}-approve`;
+    setRequestActionSubmitting(key);
+    setOwnerApprovalError(null);
+    try {
+      await approveOwnerPendingRequest({
+        tenantRowId: selectedOwnerRequest.id,
+        monthlyRent: parsedRent,
+        dateJoined: ownerApprovalDateJoined.trim(),
+      });
+      closeOwnerApprovalDialog();
+      await loadPendingRequests();
+    } catch (caughtError) {
+      setOwnerApprovalError(caughtError instanceof Error ? caughtError.message : "Failed to approve request");
+    } finally {
+      setRequestActionSubmitting(null);
+    }
+  };
+
+  const handleRejectOwnerRequest = async (requestId: number) => {
+    const key = `owner-${requestId}-reject`;
+    setRequestActionSubmitting(key);
+    setPendingRequestsError(null);
+    try {
+      await rejectOwnerPendingRequest(requestId);
+      await loadPendingRequests();
+    } catch (caughtError) {
+      setPendingRequestsError(caughtError instanceof Error ? caughtError.message : "Failed to reject request");
+    } finally {
+      setRequestActionSubmitting(null);
+    }
   };
 
   const messages = selectedConnection
@@ -359,10 +489,10 @@ export default function MessagesPage() {
             </Tabs>
 
             {/* Pending Requests */}
-            {pendingConnections.length > 0 && (
+            {totalPendingRequestCount > 0 && (
               <div className="border-t border-border p-4">
                 <p className="mb-3 text-xs font-semibold uppercase text-muted-foreground">
-                  Pending Requests ({pendingConnections.length})
+                  Pending Requests ({totalPendingRequestCount})
                 </p>
                 <div className="space-y-2">
                   {pendingConnections.map((conn) => (
@@ -391,6 +521,80 @@ export default function MessagesPage() {
                       </Button>
                     </div>
                   ))}
+                  {tenantInviteRequests.map((request) => (
+                    <div
+                      key={`tenant-invite-${request.id}`}
+                      className="space-y-2 rounded-lg bg-warning/10 p-3"
+                    >
+                      <p className="text-sm font-medium text-foreground">
+                        {request.ownerName} wants to add you to {request.propertyName}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Do you wish to continue as tenant?
+                      </p>
+                      <div className="text-xs text-muted-foreground">
+                        Monthly Rent: {request.monthlyRent != null ? `NPR ${request.monthlyRent.toLocaleString()}` : "Not set"}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        Date Joined: {request.dateJoined || "Not set"}
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => void handleRespondTenantInvite(request.id, true)}
+                          disabled={requestActionSubmitting === `tenant-${request.id}-approve`}
+                        >
+                          {requestActionSubmitting === `tenant-${request.id}-approve` ? "Submitting..." : "Accept"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void handleRespondTenantInvite(request.id, false)}
+                          disabled={requestActionSubmitting === `tenant-${request.id}-reject`}
+                        >
+                          Reject
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {ownerApprovalRequests.map((request) => (
+                    <div
+                      key={`owner-approval-${request.id}`}
+                      className="space-y-2 rounded-lg bg-primary/10 p-3"
+                    >
+                      <p className="text-sm font-medium text-foreground">
+                        {request.tenantName} wants to be your tenant for {request.propertyName}
+                      </p>
+                      <div className="text-xs text-muted-foreground">
+                        This request needs your confirmation with rent and joined date.
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => openOwnerApprovalDialog(request)}
+                        >
+                          Review
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void handleRejectOwnerRequest(request.id)}
+                          disabled={requestActionSubmitting === `owner-${request.id}-reject`}
+                        >
+                          Reject
+                        </Button>
+                        <Button size="sm" variant="ghost" asChild>
+                          <Link href={`/properties/${request.propertyId}`}>Open Property</Link>
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {pendingRequestsLoading && (
+                    <p className="text-xs text-muted-foreground">Loading pending requests...</p>
+                  )}
+                  {pendingRequestsError && (
+                    <p className="text-xs text-destructive">{pendingRequestsError}</p>
+                  )}
                 </div>
               </div>
             )}
@@ -585,6 +789,59 @@ export default function MessagesPage() {
           )}
         </Card>
       </div>
+
+      <Dialog
+        open={ownerApprovalOpen}
+        onOpenChange={(open) => (open ? setOwnerApprovalOpen(true) : closeOwnerApprovalDialog())}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Confirm Tenant Request</DialogTitle>
+            <DialogDescription>
+              {selectedOwnerRequest
+                ? `${selectedOwnerRequest.tenantName} wants to be your tenant for ${selectedOwnerRequest.propertyName}.`
+                : "Review this request."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label>Monthly Rent (NPR)</Label>
+              <Input
+                min={0}
+                type="number"
+                value={ownerApprovalRent}
+                onChange={(event) => setOwnerApprovalRent(event.target.value)}
+                placeholder="e.g. 25000"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Date Joined (Nepali)</Label>
+              <NepaliDateInput value={ownerApprovalDateJoined} onChange={setOwnerApprovalDateJoined} />
+            </div>
+          </div>
+
+          {ownerApprovalError && <p className="text-sm text-destructive">{ownerApprovalError}</p>}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeOwnerApprovalDialog}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleApproveOwnerRequest()}
+              disabled={
+                requestActionSubmitting === `owner-${selectedOwnerRequest?.id ?? 0}-approve` ||
+                !ownerApprovalRent.trim() ||
+                !ownerApprovalDateJoined.trim()
+              }
+            >
+              {requestActionSubmitting === `owner-${selectedOwnerRequest?.id ?? 0}-approve`
+                ? "Confirming..."
+                : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Person Dialog */}
       <Dialog open={addPersonOpen} onOpenChange={setAddPersonOpen}>

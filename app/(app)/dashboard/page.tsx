@@ -18,18 +18,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUser } from "@/lib/user-context";
 import {
+  fetchTenantPendingConnectionRequests,
   connectTenantToPropertyByCode,
   fetchBills,
   fetchProperties,
+  getEffectivePropertyRent,
   getBillPaymentSummary,
+  respondToTenantInviteRequest,
   type BillRecord,
   type PropertyRecord,
+  type TenantInviteRequest,
 } from "@/lib/rental-data";
 
 const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
 const maxShortcutCards = 4;
 const maxRecentBills = 4;
-
 export default function DashboardPage() {
   const { user } = useUser();
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
@@ -41,16 +44,23 @@ export default function DashboardPage() {
   const [connectPropertyCode, setConnectPropertyCode] = useState("");
   const [connectSubmitting, setConnectSubmitting] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectSuccess, setConnectSuccess] = useState<string | null>(null);
+  const [pendingInviteRequests, setPendingInviteRequests] = useState<TenantInviteRequest[]>([]);
+  const [inviteActionSubmittingId, setInviteActionSubmittingId] = useState<number | null>(null);
+  const [inviteActionError, setInviteActionError] = useState<string | null>(null);
 
   const loadDashboardData = useCallback(async () => {
     try {
-      const [propertyData, billData] = await Promise.all([
+      const [propertyData, billData, pendingRequests] = await Promise.all([
         fetchProperties(),
         fetchBills(),
+        fetchTenantPendingConnectionRequests(),
       ]);
 
       setProperties(propertyData);
       setBills(billData);
+      setPendingInviteRequests(pendingRequests);
+      setInviteActionError(null);
       setError(null);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Failed to load dashboard");
@@ -138,10 +148,12 @@ export default function DashboardPage() {
     setConnectPropertyCode("");
     setConnectSubmitting(false);
     setConnectError(null);
+    setConnectSuccess(null);
   };
 
   const handleConnectToProperty = async () => {
     setConnectError(null);
+    setConnectSuccess(null);
     setConnectSubmitting(true);
     try {
       await connectTenantToPropertyByCode({
@@ -151,13 +163,26 @@ export default function DashboardPage() {
         tenantPhone: user.phone,
         tenantProfileId: user.profileId,
       });
-      setConnectDialogOpen(false);
-      resetConnectDialog();
+      setConnectSuccess("Connection request sent to the property owner. Wait for approval.");
+      setConnectPropertyCode("");
       await loadDashboardData();
     } catch (caughtError) {
       setConnectError(caughtError instanceof Error ? caughtError.message : "Failed to connect property");
     } finally {
       setConnectSubmitting(false);
+    }
+  };
+
+  const handleRespondInvite = async (requestId: number, approve: boolean) => {
+    setInviteActionError(null);
+    setInviteActionSubmittingId(requestId);
+    try {
+      await respondToTenantInviteRequest(requestId, approve);
+      await loadDashboardData();
+    } catch (caughtError) {
+      setInviteActionError(caughtError instanceof Error ? caughtError.message : "Failed to respond to request");
+    } finally {
+      setInviteActionSubmittingId(null);
     }
   };
 
@@ -185,12 +210,12 @@ export default function DashboardPage() {
                     <CardTitle className="line-clamp-1 text-sm">{property.property_name}</CardTitle>
                     <p className="flex items-center gap-1 text-xs text-muted-foreground">
                       <MapPin className="h-3 w-3" />
-                      {property.location || property.address || property.city || "-"}
+                      {property.location || "-"}
                     </p>
                   </CardHeader>
                   <CardContent className="pt-0">
                     <p className="text-sm font-semibold">
-                      NPR {Number(property.desired_rent ?? property.price ?? 0).toLocaleString()}
+                      NPR {getEffectivePropertyRent(property).toLocaleString()}
                       <span className="text-xs font-normal text-muted-foreground">/{property.interval}</span>
                     </p>
                   </CardContent>
@@ -256,6 +281,7 @@ export default function DashboardPage() {
             onClick={() => {
               setConnectDialogOpen(true);
               setConnectError(null);
+              setConnectSuccess(null);
             }}
           >
             <Link2 className="mr-2 h-4 w-4" />
@@ -267,6 +293,50 @@ export default function DashboardPage() {
       {error && (
         <Card className="border-destructive/50">
           <CardContent className="pt-6 text-sm text-destructive">{error}</CardContent>
+        </Card>
+      )}
+
+      {pendingInviteRequests.length > 0 && (
+        <Card className="border-primary/30">
+          <CardHeader>
+            <CardTitle className="text-base">Pending Connection Confirmation</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {pendingInviteRequests.map((request) => (
+              <div key={request.id} className="rounded-md border p-3 text-sm">
+                <p className="font-medium">
+                  {request.ownerName} wants to add you to {request.propertyName}
+                </p>
+                <p className="mt-1 text-muted-foreground">
+                  Do you wish to continue as tenant for this property?
+                </p>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Monthly Rent: {request.monthlyRent != null ? formatNpr(request.monthlyRent) : "Not set"}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  Date Joined: {request.dateJoined || "Not set"}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => void handleRespondInvite(request.id, true)}
+                    disabled={inviteActionSubmittingId === request.id}
+                  >
+                    {inviteActionSubmittingId === request.id ? "Submitting..." : "Accept"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleRespondInvite(request.id, false)}
+                    disabled={inviteActionSubmittingId === request.id}
+                  >
+                    Reject
+                  </Button>
+                </div>
+              </div>
+            ))}
+            {inviteActionError && <p className="text-sm text-destructive">{inviteActionError}</p>}
+          </CardContent>
         </Card>
       )}
 
@@ -379,7 +449,7 @@ export default function DashboardPage() {
           <DialogHeader>
             <DialogTitle>Connect to a Property</DialogTitle>
             <DialogDescription>
-              Enter the 10-digit unique property number shared by your landlord.
+              Enter the 10-digit unique property number shared by your landlord. A request will be sent for owner confirmation.
             </DialogDescription>
           </DialogHeader>
 
@@ -396,13 +466,14 @@ export default function DashboardPage() {
           </div>
 
           {connectError && <p className="text-sm text-destructive">{connectError}</p>}
+          {connectSuccess && <p className="text-sm text-emerald-600">{connectSuccess}</p>}
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setConnectDialogOpen(false)}>
               Cancel
             </Button>
             <Button onClick={handleConnectToProperty} disabled={connectSubmitting || !connectPropertyCode.trim()}>
-              {connectSubmitting ? "Connecting..." : "Connect Property"}
+              {connectSubmitting ? "Sending..." : "Send Request"}
             </Button>
           </DialogFooter>
         </DialogContent>

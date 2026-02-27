@@ -6,14 +6,6 @@ import { useParams } from "next/navigation";
 import { ArrowLeft, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,6 +24,7 @@ import {
 import { formatNepaliDateTimeFromAd } from "@/lib/date-utils";
 
 const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
+type BillDetailMode = "view" | "verify";
 
 export default function BillDetailPage() {
   const params = useParams();
@@ -43,7 +36,7 @@ export default function BillDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [payOpen, setPayOpen] = useState(false);
+  const [billDetailMode, setBillDetailMode] = useState<BillDetailMode>("view");
   const [amountPaid, setAmountPaid] = useState("");
   const [remarks, setRemarks] = useState("");
   const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
@@ -82,6 +75,10 @@ export default function BillDetailPage() {
 
   const sections = useMemo(() => (bill ? getBillSectionSummary(bill) : null), [bill]);
   const paymentSummary = useMemo(() => (bill ? getBillPaymentSummary(bill) : null), [bill]);
+  const canVerifyPaid = useMemo(
+    () => Boolean(paymentSummary && paymentSummary.remainingAmount > 0),
+    [paymentSummary]
+  );
   const isTenantSide = useMemo(() => {
     if (!property) {
       return false;
@@ -115,6 +112,9 @@ export default function BillDetailPage() {
     setPaying(true);
 
     try {
+      if (paymentSummary.remainingAmount <= 0) {
+        throw new Error("No remaining balance to verify.");
+      }
       const parsedAmount = Number(amountPaid.trim());
       if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
         throw new Error("Paid amount must be greater than 0.");
@@ -146,18 +146,18 @@ export default function BillDetailPage() {
       });
 
       setBill(updated);
-      setPayOpen(false);
+      setBillDetailMode("view");
       setAmountPaid("");
       setRemarks("");
       setEvidenceFile(null);
     } catch (caughtError) {
-      setPayError(caughtError instanceof Error ? caughtError.message : "Failed to submit payment claim");
+      setPayError(caughtError instanceof Error ? caughtError.message : "Failed to submit paid verification");
     } finally {
       setPaying(false);
     }
   };
 
-  const handleVerifyClaim = async (claimId: string) => {
+  const handleVerifyClaim = async (claimId: string, approve = true) => {
     if (!bill) {
       return;
     }
@@ -169,11 +169,11 @@ export default function BillDetailPage() {
         billId: bill.id,
         claimId,
         verifier: "owner",
-        approve: true,
+        approve,
       });
       setBill(updated);
     } catch (caughtError) {
-      setVerifyError(caughtError instanceof Error ? caughtError.message : "Failed to verify payment claim");
+      setVerifyError(caughtError instanceof Error ? caughtError.message : "Failed to process payment claim");
     } finally {
       setVerifyingClaimId(null);
     }
@@ -255,29 +255,88 @@ export default function BillDetailPage() {
           <CardTitle className="text-base">Payment Details</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2 text-sm">
-          <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(paymentSummary.totalPaid)}</span></div>
-          <div className="flex justify-between font-semibold">
-            <span>{paymentSummary.surplusAmount > 0 ? "Surplus Amount" : "Remaining Amount"}</span>
-            <span>
-              {formatNpr(paymentSummary.surplusAmount > 0 ? paymentSummary.surplusAmount : paymentSummary.remainingAmount)}
-            </span>
-          </div>
           {isTenantSide ? (
             <div className="pt-2">
-              <Button
-                onClick={() => {
-                  setAmountPaid(paymentSummary.remainingAmount.toFixed(2));
-                  setPayOpen(true);
-                }}
-              >
-                Pay
-              </Button>
+              {billDetailMode === "verify" ? (
+                <>
+                  <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(paymentSummary.totalPaid)}</span></div>
+                  <div className="flex justify-between font-semibold">
+                    <span>{paymentSummary.surplusAmount > 0 ? "Surplus Amount" : "Remaining Amount"}</span>
+                    <span>
+                      {formatNpr(paymentSummary.surplusAmount > 0 ? paymentSummary.surplusAmount : paymentSummary.remainingAmount)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <Button
+                  disabled={!canVerifyPaid}
+                  onClick={() => {
+                    if (!canVerifyPaid) {
+                      return;
+                    }
+                    if (!amountPaid.trim()) {
+                      setAmountPaid(paymentSummary.remainingAmount.toFixed(2));
+                    }
+                    setBillDetailMode("verify");
+                  }}
+                >
+                  Verify Paid
+                </Button>
+              )}
             </div>
           ) : (
-            <p className="pt-2 text-xs text-muted-foreground">
-              Remaining balance updates only after you verify tenant payment claims.
-            </p>
+            <>
+              <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(paymentSummary.totalPaid)}</span></div>
+              <div className="flex justify-between font-semibold">
+                <span>{paymentSummary.surplusAmount > 0 ? "Surplus Amount" : "Remaining Amount"}</span>
+                <span>
+                  {formatNpr(paymentSummary.surplusAmount > 0 ? paymentSummary.surplusAmount : paymentSummary.remainingAmount)}
+                </span>
+              </div>
+              <p className="pt-2 text-xs text-muted-foreground">
+                Remaining balance updates only after you verify tenant payment claims.
+              </p>
+            </>
           )}
+
+          {isTenantSide && billDetailMode === "verify" ? (
+            <div className="mt-3 space-y-3 rounded-md border p-3">
+              <p className="text-xs text-muted-foreground">
+                Suggested amount is the current remaining balance. You can edit it before submitting.
+              </p>
+              <div className="space-y-2">
+                <Label>Amount Paid (NPR)</Label>
+                <Input
+                  min={0}
+                  type="number"
+                  value={amountPaid}
+                  onChange={(event) => setAmountPaid(event.target.value)}
+                  placeholder="e.g. 5000"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Remarks</Label>
+                <Textarea
+                  value={remarks}
+                  onChange={(event) => setRemarks(event.target.value)}
+                  placeholder="Optional notes about this payment"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Evidence (optional)</Label>
+                <Input
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={(event) => handleEvidenceChange(event.target.files?.[0] || null)}
+                />
+                <p className="text-xs text-muted-foreground">Supported files: PDF and images only.</p>
+              </div>
+              {payError ? <p className="text-sm text-destructive">{payError}</p> : null}
+              <Button type="button" onClick={handleSubmitPaymentClaim} disabled={paying || !canVerifyPaid}>
+                {paying ? "Saving..." : "Verify Paid"}
+              </Button>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -306,14 +365,23 @@ export default function BillDetailPage() {
                     </div>
                   ) : null}
                   {!isTenantSide ? (
-                    <div className="pt-2">
+                    <div className="flex gap-2 pt-2">
                       <Button
                         type="button"
                         size="sm"
-                        onClick={() => handleVerifyClaim(claim.id)}
-                        disabled={verifyingClaimId === claim.id}
+                        onClick={() => handleVerifyClaim(claim.id, true)}
+                        disabled={verifyingClaimId === claim.id || paymentSummary.remainingAmount <= 0}
                       >
-                        {verifyingClaimId === claim.id ? "Verifying..." : "Verify Payment"}
+                        {verifyingClaimId === claim.id ? "Processing..." : "Verify Payment"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleVerifyClaim(claim.id, false)}
+                        disabled={verifyingClaimId === claim.id || paymentSummary.remainingAmount <= 0}
+                      >
+                        {verifyingClaimId === claim.id ? "Processing..." : "Not Received"}
                       </Button>
                     </div>
                   ) : (
@@ -363,54 +431,6 @@ export default function BillDetailPage() {
         </CardContent>
       </Card>
 
-      <Dialog open={payOpen} onOpenChange={setPayOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Pay</DialogTitle>
-            <DialogDescription>
-              Enter the amount you paid. Owner verification is required before balance updates.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <Label>Amount Paid (NPR)</Label>
-              <Input
-                min={0}
-                type="number"
-                value={amountPaid}
-                onChange={(event) => setAmountPaid(event.target.value)}
-                placeholder="e.g. 5000"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Remarks</Label>
-              <Textarea
-                value={remarks}
-                onChange={(event) => setRemarks(event.target.value)}
-                placeholder="Optional notes about this payment"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Evidence (optional)</Label>
-              <Input
-                type="file"
-                accept="application/pdf,image/*"
-                onChange={(event) => handleEvidenceChange(event.target.files?.[0] || null)}
-              />
-              <p className="text-xs text-muted-foreground">Supported files: PDF and images only.</p>
-            </div>
-            {payError && <p className="text-sm text-destructive">{payError}</p>}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPayOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmitPaymentClaim} disabled={paying}>
-              {paying ? "Saving..." : "Submit Claim"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

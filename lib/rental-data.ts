@@ -21,26 +21,15 @@ export type PropertyRecord = {
   price: number;
   desired_rent?: number | null;
   interval: string;
-  address?: string | null;
   location?: string | null;
-  city?: string | null;
-  rooms?: number | null;
   bedrooms?: number | null;
-  bathrooms?: number | null;
-  kitchens?: number | null;
-  dinings?: number | null;
-  livings?: number | null;
   sqft?: number | null;
-  bike_parking?: string | null;
-  car_parking?: string | null;
-  services?: string[] | null;
   description?: string | null;
-  status?: string | null;
-  car_parking_spaces?: number | null;
-  water_supply?: boolean | null;
-  wifi?: boolean | null;
-  furnished_level?: "none" | "semi" | "full" | null;
   property_images?: PropertyImageRecord[];
+  property_tenants?: Array<{
+    monthly_rent?: number | null;
+    status?: string | null;
+  }>;
 };
 
 export type PropertyTenantRecord = {
@@ -105,21 +94,9 @@ export type CreatePropertyInput = {
   desiredRent: number;
   interval: string;
   location: string;
-  rooms: number;
   bedrooms: number;
-  bathrooms: number;
-  kitchens: number;
-  dinings: number;
-  livings: number;
   sqft?: number | null;
   description: string;
-  bikeParking: boolean;
-  carParking: boolean;
-  carParkingSpaces: number;
-  waterSupply: boolean;
-  wifi: boolean;
-  furnishedLevel: "none" | "semi" | "full";
-  otherServices: string[];
   ownerProfileId?: string;
   ownerName?: string;
   ownerEmail?: string;
@@ -180,13 +157,45 @@ export type CreatePropertyTenantInput = {
   tenantEmail?: string;
   tenantPhone?: string;
   monthlyRent?: number;
-  dateJoined?: string;
+  dateJoined: string;
 };
 
 export type CreatePropertyTenantByUserIdInput = {
   propertyId: number;
   tenantAppUserId: string;
   monthlyRent?: number;
+  dateJoined: string;
+};
+
+export type TenantInviteRequest = {
+  id: number;
+  propertyId: number;
+  propertyCode: string | null;
+  propertyName: string;
+  propertyLocation: string;
+  propertyRent: number | null;
+  propertyImageUrl: string | null;
+  ownerName: string;
+  ownerEmail: string;
+  tenantName: string;
+  tenantEmail: string;
+  monthlyRent: number | null;
+  dateJoined: string | null;
+  createdAt: string;
+};
+
+export type OwnerApprovalRequest = {
+  id: number;
+  propertyId: number;
+  propertyCode: string | null;
+  propertyName: string;
+  propertyLocation: string;
+  propertyRent: number | null;
+  propertyImageUrl: string | null;
+  tenantName: string;
+  tenantEmail: string;
+  tenantPhone: string;
+  createdAt: string;
 };
 
 export type BillPaymentEntry = {
@@ -273,6 +282,89 @@ function toNonNegativeNumber(value: unknown, fallback = 0) {
     return Math.max(0, fallback);
   }
   return num;
+}
+
+function toCurrencyAmount(value: unknown) {
+  return Math.round(toNonNegativeNumber(value) * 100) / 100;
+}
+
+async function compressImageFileForUpload(file: File) {
+  if (!file.type.startsWith("image/")) {
+    return file;
+  }
+  if (typeof document === "undefined" || typeof URL === "undefined" || typeof File === "undefined") {
+    return file;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("Failed to load image."));
+      element.src = objectUrl;
+    });
+
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (!width || !height) {
+      return file;
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) {
+      return file;
+    }
+    context.drawImage(image, 0, 0, width, height);
+
+    const compressedBlob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", 0.82);
+    });
+
+    if (!compressedBlob || compressedBlob.size >= file.size) {
+      return file;
+    }
+
+    const baseName = file.name.replace(/\.[^.]+$/, "") || "evidence";
+    return new File([compressedBlob], `${baseName}.webp`, {
+      type: "image/webp",
+      lastModified: Date.now(),
+    });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function prepareFileForUpload(file: File) {
+  return compressImageFileForUpload(file);
+}
+
+export function getEffectivePropertyRent(property: Pick<PropertyRecord, "desired_rent" | "price" | "property_tenants"> | null | undefined) {
+  if (!property) {
+    return 0;
+  }
+
+  const tenants = property.property_tenants || [];
+  const activeTenant = tenants.find((tenant) => tenant.status === "active" && tenant.monthly_rent != null);
+  const pendingOwnerInvite = tenants.find(
+    (tenant) => tenant.status === "pending_tenant_confirmation" && tenant.monthly_rent != null
+  );
+  const firstAvailableTenantRent = tenants.find((tenant) => tenant.monthly_rent != null);
+
+  return toNonNegativeNumber(
+    activeTenant?.monthly_rent ??
+      pendingOwnerInvite?.monthly_rent ??
+      firstAvailableTenantRent?.monthly_rent ??
+      property.desired_rent ??
+      property.price ??
+      0
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -611,12 +703,7 @@ function validateCreatePropertyInput(input: CreatePropertyInput) {
 
   assertNonNegativeNumber(input.price, "Price");
   assertNonNegativeNumber(input.desiredRent, "Monthly rent");
-  assertNonNegativeNumber(input.rooms, "Rooms");
   assertNonNegativeNumber(input.bedrooms, "Bedrooms");
-  assertNonNegativeNumber(input.bathrooms, "Bathrooms");
-  assertNonNegativeNumber(input.kitchens, "Kitchens");
-  assertNonNegativeNumber(input.dinings, "Dinings");
-  assertNonNegativeNumber(input.livings, "Livings");
 
   const normalizedPropertyType = input.propertyType.trim().toLowerCase();
   if (["flat", "house", "bnb"].includes(normalizedPropertyType)) {
@@ -627,10 +714,6 @@ function validateCreatePropertyInput(input: CreatePropertyInput) {
 
   if (typeof input.sqft === "number") {
     assertNonNegativeNumber(input.sqft, "Square feet");
-  }
-
-  if (input.carParking) {
-    assertNonNegativeNumber(input.carParkingSpaces, "Car parking spaces");
   }
 
   if (!Array.isArray(input.images) || input.images.length === 0) {
@@ -763,7 +846,7 @@ export async function fetchProperties() {
 
   const { data, error } = await supabase
     .from("properties")
-    .select("*, property_images(*)")
+    .select("*, property_images(*), property_tenants(monthly_rent, status)")
     .in("id", accessiblePropertyIds)
     .order("created_at", { ascending: false });
 
@@ -786,39 +869,21 @@ export async function createProperty(input: CreatePropertyInput): Promise<Create
   if (!ownerProfileId) {
     throw new Error("Your account profile is not ready yet. Please close this window and try again.");
   }
-  const normalizedCarParkingSpaces = input.carParking ? input.carParkingSpaces : 0;
 
   const { data: property, error: propertyError } = await supabase
     .from("properties")
     .insert({
       owner_profile_id: ownerProfileId,
-      name: input.propertyName,
       property_name: input.propertyName,
       property_type: input.propertyType,
       currency: input.currency,
       price: input.price,
       desired_rent: input.desiredRent,
       interval: input.interval,
-      address: input.location,
       location: input.location,
-      city: input.location,
-      rooms: input.rooms,
       bedrooms: input.bedrooms,
-      bathrooms: input.bathrooms,
-      kitchens: input.kitchens,
-      dinings: input.dinings,
-      livings: input.livings,
       sqft: input.sqft,
-      bike_parking: input.bikeParking ? "yes" : "no",
-      car_parking: input.carParking ? "yes" : "no",
-      car_parking_spaces: normalizedCarParkingSpaces,
-      water_supply: input.waterSupply,
-      wifi: input.wifi,
-      furnished_level: input.furnishedLevel,
-      services: input.otherServices,
       description: input.description,
-      status: "active",
-      rent: `${input.currency} ${input.price}`,
     })
     .select("*")
     .single();
@@ -839,13 +904,14 @@ export async function createProperty(input: CreatePropertyInput): Promise<Create
 
     for (let index = 0; index < input.images.length; index += 1) {
       const image = input.images[index];
-      const safeName = image.file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+      const uploadFile = await prepareFileForUpload(image.file);
+      const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
       const path = `properties/${property.id}/${Date.now()}-${index}-${safeName}`;
 
       const { error: uploadError } = await supabase.storage
         .from(bucket)
-        .upload(path, image.file, {
-          contentType: image.file.type || "image/jpeg",
+        .upload(path, uploadFile, {
+          contentType: uploadFile.type || "image/jpeg",
           upsert: false,
         });
 
@@ -862,7 +928,7 @@ export async function createProperty(input: CreatePropertyInput): Promise<Create
         label: image.label.trim(),
         path,
         url: publicUrl,
-        mime_type: image.file.type || "image/jpeg",
+        mime_type: uploadFile.type || "image/jpeg",
       });
     }
 
@@ -986,16 +1052,18 @@ export async function uploadBillPaymentEvidence(billId: number, file: File) {
   if (!(type === "application/pdf" || type.startsWith("image/"))) {
     throw new Error("Only PDF and image files are supported.");
   }
+  const uploadFile = await prepareFileForUpload(file);
+  const uploadType = uploadFile.type || type || "application/octet-stream";
 
   const supabase = getSupabaseBrowserClient();
   const bucket = getSupabaseStorageBucket();
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
   const path = `bills/${billId}/payments/${Date.now()}-${safeName}`;
 
   const { error: uploadError } = await supabase.storage
     .from(bucket)
-    .upload(path, file, {
-      contentType: type || "application/octet-stream",
+    .upload(path, uploadFile, {
+      contentType: uploadType,
       upsert: false,
     });
 
@@ -1010,8 +1078,8 @@ export async function uploadBillPaymentEvidence(billId: number, file: File) {
   return {
     url: publicUrl,
     path,
-    mimeType: type || null,
-    name: file.name || null,
+    mimeType: uploadType || null,
+    name: uploadFile.name || file.name || null,
   };
 }
 
@@ -1019,7 +1087,8 @@ export async function submitBillPaymentClaim(input: SubmitBillPaymentClaimInput)
   if (!Number.isFinite(input.billId) || input.billId <= 0) {
     throw new Error("Valid bill ID is required.");
   }
-  if (!Number.isFinite(input.amountPaid) || input.amountPaid <= 0) {
+  const claimAmount = toCurrencyAmount(input.amountPaid);
+  if (!Number.isFinite(claimAmount) || claimAmount <= 0) {
     throw new Error("Paid amount must be greater than 0.");
   }
 
@@ -1028,11 +1097,22 @@ export async function submitBillPaymentClaim(input: SubmitBillPaymentClaimInput)
   const existingClaims = Array.isArray(breakdown.paymentClaims)
     ? breakdown.paymentClaims.map((claim) => toBillPaymentClaim(claim)).filter(Boolean) as BillPaymentClaim[]
     : [];
+  if (input.payer === "tenant") {
+    const duplicatePendingAmount = existingClaims.some(
+      (claim) =>
+        claim.status === "pending" &&
+        claim.payer === "tenant" &&
+        toCurrencyAmount(claim.amount) === claimAmount
+    );
+    if (duplicatePendingAmount) {
+      throw new Error("A pending claim with this amount already exists for this bill. Change the amount to submit again.");
+    }
+  }
 
   const claimedAt = new Date().toISOString();
   const nextClaim: BillPaymentClaim = {
     id: `claim-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    amount: input.amountPaid,
+    amount: claimAmount,
     remarks: input.remarks?.trim() || "",
     claimedAt,
     payer: input.payer,
@@ -1174,6 +1254,7 @@ export async function fetchPropertyTenants(propertyId: number) {
     .from("property_tenants")
     .select("*")
     .eq("property_id", propertyId)
+    .eq("status", "active")
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -1207,7 +1288,11 @@ export async function createPropertyTenant(input: CreatePropertyTenantInput) {
     assertNonNegativeNumber(input.monthlyRent, "Monthly rent");
   }
 
-  const joinedDate = input.dateJoined?.trim() ? bsToAd(input.dateJoined.trim()) : null;
+  const dateJoined = input.dateJoined?.trim();
+  if (!dateJoined) {
+    throw new Error("Date joined is required.");
+  }
+  const joinedDate = bsToAd(dateJoined);
 
   const supabase = getSupabaseBrowserClient();
   const { data, error } = await supabase
@@ -1248,41 +1333,32 @@ export async function createPropertyTenantByUserId(input: CreatePropertyTenantBy
   if (!tenantAppUserId) {
     throw new Error("Tenant unique ID is required.");
   }
+  const dateJoined = input.dateJoined?.trim();
+  if (!dateJoined) {
+    throw new Error("Date joined is required.");
+  }
+  const joinedDate = bsToAd(dateJoined);
 
   const supabase = getSupabaseBrowserClient();
-  const { data: rpcTenant, error: rpcError } = await supabase.rpc("connect_tenant_by_app_user_id", {
-    p_property_id: input.propertyId,
-    p_tenant_app_user_id: tenantAppUserId,
-  });
+  const currentProfileId = await resolveCurrentProfileId();
+  if (!currentProfileId) {
+    throw new Error("Your profile is not ready yet. Please sign in again.");
+  }
 
-  if (!rpcError) {
-    const row = (Array.isArray(rpcTenant) ? rpcTenant[0] : rpcTenant) as PropertyTenantRecord | null;
-    if (row) {
-      let normalizedRow = row;
-      if (typeof input.monthlyRent === "number" && Number.isFinite(row.id)) {
-        const { data: updatedTenant, error: updateError } = await supabase
-          .from("property_tenants")
-          .update({ monthly_rent: input.monthlyRent })
-          .eq("id", row.id)
-          .select("*")
-          .maybeSingle();
-        if (updateError) {
-          throw new Error(updateError.message || "Failed to save tenant monthly rent");
-        }
-        if (updatedTenant) {
-          normalizedRow = updatedTenant as PropertyTenantRecord;
-        }
-      }
+  const { data: property, error: propertyError } = await supabase
+    .from("properties")
+    .select("id, owner_profile_id")
+    .eq("id", input.propertyId)
+    .maybeSingle();
 
-      return {
-        ...normalizedRow,
-        monthly_rent: normalizedRow.monthly_rent == null ? null : toNonNegativeNumber(normalizedRow.monthly_rent),
-        date_joined: normalizedRow.date_joined ? adToBs(normalizedRow.date_joined) : null,
-        date_end: normalizedRow.date_end ? adToBs(normalizedRow.date_end) : null,
-      } as PropertyTenantRecord;
-    }
-  } else if (!/connect_tenant_by_app_user_id/i.test(rpcError.message || "")) {
-    throw new Error(rpcError.message || "Failed to connect tenant");
+  if (propertyError) {
+    throw new Error(propertyError.message || "Failed to resolve property");
+  }
+  if (!property) {
+    throw new Error("Property not found.");
+  }
+  if (property.owner_profile_id !== currentProfileId) {
+    throw new Error("Only the property owner can send this request.");
   }
 
   const { data: tenantProfile, error: profileError } = await supabase
@@ -1313,6 +1389,21 @@ export async function createPropertyTenantByUserId(input: CreatePropertyTenantBy
     throw new Error("This user is already connected as tenant for this property.");
   }
 
+  const { data: existingPendingInvite, error: pendingInviteError } = await supabase
+    .from("property_tenants")
+    .select("id")
+    .eq("property_id", input.propertyId)
+    .eq("tenant_profile_id", tenantProfile.id)
+    .eq("status", "pending_tenant_confirmation")
+    .limit(1);
+
+  if (pendingInviteError) {
+    throw new Error(pendingInviteError.message || "Failed to check pending tenant request");
+  }
+  if ((existingPendingInvite || []).length > 0) {
+    throw new Error("A pending request has already been sent to this tenant.");
+  }
+
   const { data: insertedTenant, error: insertError } = await supabase
     .from("property_tenants")
     .insert({
@@ -1322,14 +1413,14 @@ export async function createPropertyTenantByUserId(input: CreatePropertyTenantBy
       tenant_email: tenantProfile.email || null,
       tenant_phone: tenantProfile.phone || null,
       monthly_rent: typeof input.monthlyRent === "number" ? input.monthlyRent : null,
-      date_joined: new Date().toISOString().slice(0, 10),
-      status: "active",
+      date_joined: joinedDate,
+      status: "pending_tenant_confirmation",
     })
     .select("*")
     .single();
 
   if (insertError || !insertedTenant) {
-    throw new Error(insertError?.message || "Failed to connect tenant");
+    throw new Error(insertError?.message || "Failed to send tenant request");
   }
 
   return {
@@ -1362,9 +1453,15 @@ export async function connectTenantToPropertyByCode(
   }
 
   const supabase = getSupabaseBrowserClient();
+  const currentProfileId = await resolveCurrentProfileId();
+  const tenantProfileId = input.tenantProfileId || currentProfileId;
+  if (!tenantProfileId) {
+    throw new Error("Your profile is not ready yet. Please sign in again.");
+  }
+
   const { data: property, error: propertyError } = await supabase
     .from("properties")
-    .select("id, property_name, property_code")
+    .select("id, property_name, property_code, owner_profile_id")
     .eq("property_code", propertyCode)
     .maybeSingle();
 
@@ -1373,6 +1470,9 @@ export async function connectTenantToPropertyByCode(
   }
   if (!property) {
     throw new Error("No property found for this code.");
+  }
+  if (property.owner_profile_id === tenantProfileId) {
+    throw new Error("You already own this property.");
   }
 
   let duplicateQuery = supabase
@@ -1396,22 +1496,44 @@ export async function connectTenantToPropertyByCode(
     throw new Error("You are already connected to this property.");
   }
 
+  const { data: existingPendingRequest, error: pendingRequestError } = await supabase
+    .from("property_tenants")
+    .select("id")
+    .eq("property_id", property.id)
+    .eq("tenant_profile_id", tenantProfileId)
+    .eq("status", "pending_owner_approval")
+    .limit(1);
+
+  if (pendingRequestError) {
+    throw new Error(pendingRequestError.message || "Failed to check pending request");
+  }
+  if ((existingPendingRequest || []).length > 0) {
+    throw new Error("Your request is already pending owner confirmation.");
+  }
+
+  const { data: tenantProfile } = await supabase
+    .from("profiles")
+    .select("name, email, phone")
+    .eq("id", tenantProfileId)
+    .maybeSingle();
+
   const { data: tenant, error: tenantError } = await supabase
     .from("property_tenants")
     .insert({
       property_id: property.id,
-      tenant_profile_id: input.tenantProfileId || null,
-      tenant_name: tenantName,
-      tenant_email: tenantEmail || null,
-      tenant_phone: input.tenantPhone?.trim() || null,
-      date_joined: new Date().toISOString().slice(0, 10),
-      status: "active",
+      tenant_profile_id: tenantProfileId,
+      tenant_name: tenantProfile?.name || tenantName,
+      tenant_email: tenantProfile?.email || tenantEmail || null,
+      tenant_phone: tenantProfile?.phone || input.tenantPhone?.trim() || null,
+      date_joined: null,
+      monthly_rent: null,
+      status: "pending_owner_approval",
     })
     .select("*")
     .single();
 
   if (tenantError || !tenant) {
-    throw new Error(tenantError?.message || "Failed to connect to property");
+    throw new Error(tenantError?.message || "Failed to send property connection request");
   }
 
   return {
@@ -1423,6 +1545,290 @@ export async function connectTenantToPropertyByCode(
       date_end: tenant.date_end ? adToBs(tenant.date_end) : null,
     },
   };
+}
+
+export async function fetchTenantPendingConnectionRequests(): Promise<TenantInviteRequest[]> {
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    return [];
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const { data: requestRows, error: requestError } = await supabase
+    .from("property_tenants")
+    .select("id, property_id, tenant_name, tenant_email, monthly_rent, date_joined, created_at")
+    .eq("tenant_profile_id", profileId)
+    .eq("status", "pending_tenant_confirmation")
+    .order("created_at", { ascending: false });
+
+  if (requestError) {
+    throw new Error(requestError.message || "Failed to fetch tenant requests");
+  }
+
+  const rows = requestRows || [];
+  if (rows.length === 0) {
+    return [];
+  }
+
+  const propertyIds = Array.from(new Set(rows.map((row) => Number(row.property_id)).filter((id) => Number.isFinite(id))));
+  const { data: properties, error: propertiesError } = await supabase
+    .from("properties")
+    .select("id, property_name, property_code, owner_profile_id, location, desired_rent, price, property_images(url, created_at)")
+    .in("id", propertyIds);
+
+  if (propertiesError) {
+    throw new Error(propertiesError.message || "Failed to resolve request properties");
+  }
+
+  const ownerProfileIds = Array.from(
+    new Set((properties || []).map((property) => property.owner_profile_id).filter((id): id is string => typeof id === "string" && id.length > 0))
+  );
+  const { data: owners, error: ownersError } = await supabase
+    .from("profiles")
+    .select("id, name, email")
+    .in("id", ownerProfileIds);
+
+  if (ownersError) {
+    throw new Error(ownersError.message || "Failed to resolve owners");
+  }
+
+  const propertyById = new Map((properties || []).map((property) => [Number(property.id), property]));
+  const ownerById = new Map((owners || []).map((owner) => [owner.id, owner]));
+
+  return rows.map((row) => {
+    const property = propertyById.get(Number(row.property_id));
+    const owner = property?.owner_profile_id ? ownerById.get(property.owner_profile_id) : null;
+    const propertyImages = Array.isArray(property?.property_images) ? property.property_images : [];
+    const propertyImageUrl = propertyImages[0]?.url || null;
+    const propertyRent =
+      property?.desired_rent == null && property?.price == null
+        ? null
+        : toNonNegativeNumber(property?.desired_rent ?? property?.price ?? 0);
+    return {
+      id: Number(row.id),
+      propertyId: Number(row.property_id),
+      propertyCode: property?.property_code || null,
+      propertyName: property?.property_name || "Property",
+      propertyLocation: property?.location || "-",
+      propertyRent,
+      propertyImageUrl,
+      ownerName: owner?.name || "Owner",
+      ownerEmail: owner?.email || "",
+      tenantName: row.tenant_name || "Tenant",
+      tenantEmail: row.tenant_email || "",
+      monthlyRent: row.monthly_rent == null ? null : toNonNegativeNumber(row.monthly_rent),
+      dateJoined: row.date_joined ? adToBs(row.date_joined) : null,
+      createdAt: row.created_at || "",
+    };
+  });
+}
+
+export async function respondToTenantInviteRequest(tenantRowId: number, approve: boolean) {
+  if (!Number.isFinite(tenantRowId) || tenantRowId <= 0) {
+    throw new Error("Valid request is required.");
+  }
+
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    throw new Error("Your profile is not ready yet. Please sign in again.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const { data: row, error: rowError } = await supabase
+    .from("property_tenants")
+    .select("id, tenant_profile_id, status")
+    .eq("id", tenantRowId)
+    .maybeSingle();
+
+  if (rowError) {
+    throw new Error(rowError.message || "Failed to resolve request");
+  }
+  if (!row) {
+    throw new Error("Request not found.");
+  }
+  if (row.tenant_profile_id !== profileId) {
+    throw new Error("You cannot respond to this request.");
+  }
+  if (row.status !== "pending_tenant_confirmation") {
+    throw new Error("This request is no longer pending.");
+  }
+
+  const nextStatus = approve ? "active" : "rejected";
+  const { error: updateError } = await supabase
+    .from("property_tenants")
+    .update({ status: nextStatus })
+    .eq("id", tenantRowId);
+
+  if (updateError) {
+    throw new Error(updateError.message || "Failed to update request status");
+  }
+}
+
+export async function fetchOwnerPendingApprovalRequests(propertyId: number): Promise<OwnerApprovalRequest[]> {
+  if (!Number.isFinite(propertyId) || propertyId <= 0) {
+    throw new Error("Valid property ID is required.");
+  }
+
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    return [];
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const { data: property, error: propertyError } = await supabase
+    .from("properties")
+    .select("id, property_name, property_code, owner_profile_id, location, desired_rent, price, property_images(url, created_at)")
+    .eq("id", propertyId)
+    .maybeSingle();
+
+  if (propertyError) {
+    throw new Error(propertyError.message || "Failed to resolve property");
+  }
+  if (!property || property.owner_profile_id !== profileId) {
+    return [];
+  }
+
+  const { data: requestRows, error: requestError } = await supabase
+    .from("property_tenants")
+    .select("id, property_id, tenant_name, tenant_email, tenant_phone, created_at")
+    .eq("property_id", propertyId)
+    .eq("status", "pending_owner_approval")
+    .order("created_at", { ascending: false });
+
+  if (requestError) {
+    throw new Error(requestError.message || "Failed to fetch pending owner approvals");
+  }
+
+  const propertyImages = Array.isArray(property.property_images) ? property.property_images : [];
+  const propertyImageUrl = propertyImages[0]?.url || null;
+  const propertyRent =
+    property.desired_rent == null && property.price == null
+      ? null
+      : toNonNegativeNumber(property.desired_rent ?? property.price ?? 0);
+
+  return (requestRows || []).map((row) => ({
+    id: Number(row.id),
+    propertyId: Number(row.property_id),
+    propertyCode: property.property_code || null,
+    propertyName: property.property_name || "Property",
+    propertyLocation: property.location || "-",
+    propertyRent,
+    propertyImageUrl,
+    tenantName: row.tenant_name || "Tenant",
+    tenantEmail: row.tenant_email || "",
+    tenantPhone: row.tenant_phone || "",
+    createdAt: row.created_at || "",
+  }));
+}
+
+export async function approveOwnerPendingRequest(input: { tenantRowId: number; monthlyRent: number; dateJoined: string }) {
+  if (!Number.isFinite(input.tenantRowId) || input.tenantRowId <= 0) {
+    throw new Error("Valid request is required.");
+  }
+  assertNonNegativeNumber(input.monthlyRent, "Monthly rent");
+  const dateJoined = input.dateJoined.trim();
+  if (!dateJoined) {
+    throw new Error("Date joined is required.");
+  }
+  const joinedDate = bsToAd(dateJoined);
+
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    throw new Error("Your profile is not ready yet. Please sign in again.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const { data: row, error: rowError } = await supabase
+    .from("property_tenants")
+    .select("id, property_id, status")
+    .eq("id", input.tenantRowId)
+    .maybeSingle();
+
+  if (rowError) {
+    throw new Error(rowError.message || "Failed to resolve request");
+  }
+  if (!row) {
+    throw new Error("Request not found.");
+  }
+  if (row.status !== "pending_owner_approval") {
+    throw new Error("This request is no longer pending.");
+  }
+
+  const { data: property, error: propertyError } = await supabase
+    .from("properties")
+    .select("id, owner_profile_id")
+    .eq("id", row.property_id)
+    .maybeSingle();
+
+  if (propertyError) {
+    throw new Error(propertyError.message || "Failed to resolve property owner");
+  }
+  if (!property || property.owner_profile_id !== profileId) {
+    throw new Error("Only the property owner can approve this request.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("property_tenants")
+    .update({
+      monthly_rent: input.monthlyRent,
+      date_joined: joinedDate,
+      status: "active",
+    })
+    .eq("id", input.tenantRowId);
+
+  if (updateError) {
+    throw new Error(updateError.message || "Failed to approve tenant request");
+  }
+}
+
+export async function rejectOwnerPendingRequest(tenantRowId: number) {
+  if (!Number.isFinite(tenantRowId) || tenantRowId <= 0) {
+    throw new Error("Valid request is required.");
+  }
+
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) {
+    throw new Error("Your profile is not ready yet. Please sign in again.");
+  }
+
+  const supabase = getSupabaseBrowserClient();
+  const { data: row, error: rowError } = await supabase
+    .from("property_tenants")
+    .select("id, property_id, status")
+    .eq("id", tenantRowId)
+    .maybeSingle();
+
+  if (rowError) {
+    throw new Error(rowError.message || "Failed to resolve request");
+  }
+  if (!row) {
+    throw new Error("Request not found.");
+  }
+  if (row.status !== "pending_owner_approval") {
+    throw new Error("This request is no longer pending.");
+  }
+
+  const { data: property, error: propertyError } = await supabase
+    .from("properties")
+    .select("id, owner_profile_id")
+    .eq("id", row.property_id)
+    .maybeSingle();
+
+  if (propertyError) {
+    throw new Error(propertyError.message || "Failed to resolve property owner");
+  }
+  if (!property || property.owner_profile_id !== profileId) {
+    throw new Error("Only the property owner can reject this request.");
+  }
+
+  const { error: updateError } = await supabase
+    .from("property_tenants")
+    .update({ status: "rejected" })
+    .eq("id", tenantRowId);
+
+  if (updateError) {
+    throw new Error(updateError.message || "Failed to reject tenant request");
+  }
 }
 
 export async function deleteProperty(propertyId: number) {
@@ -1519,6 +1925,7 @@ export async function createBill(input: CreateBillInput) {
     .from("property_tenants")
     .select("id")
     .eq("property_id", input.propertyId)
+    .eq("status", "active")
     .limit(1);
 
   if (tenantCheckError) {

@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Plus, MapPin, BedDouble, Bath, Square } from "lucide-react";
+import { Plus, MapPin } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { PropertyFormDialog } from "@/components/properties/property-form-dialog";
 import { useUser } from "@/lib/user-context";
-import { fetchProperties, type PropertyRecord } from "@/lib/rental-data";
+import { fetchProperties, getEffectivePropertyRent, type PropertyRecord } from "@/lib/rental-data";
 
 const refreshMs = 5000;
 
@@ -74,28 +74,14 @@ export default function PropertiesPage() {
                   <CardTitle className="line-clamp-1 text-base">{property.property_name}</CardTitle>
                   <p className="flex items-center gap-1 text-xs text-muted-foreground">
                     <MapPin className="h-3 w-3" />
-                    {property.location || property.address || property.city || "-"}
+                    {property.location || "-"}
                   </p>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-lg font-semibold">
-                    NPR {Number(property.desired_rent ?? property.price ?? 0).toLocaleString()}
-                    <span className="text-sm font-normal text-muted-foreground">/{property.interval}</span>
+                  <p className="text-sm font-semibold">
+                    NPR {getEffectivePropertyRent(property).toLocaleString()}
+                    <span className="text-xs font-normal text-muted-foreground">/{property.interval}</span>
                   </p>
-                  <div className="mt-3 flex items-center gap-3 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <BedDouble className="h-3.5 w-3.5" />
-                      {property.bedrooms ?? 0} bed
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Bath className="h-3.5 w-3.5" />
-                      {property.bathrooms ?? 0} bath
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Square className="h-3.5 w-3.5" />
-                      {property.sqft ?? 0} sqft
-                    </span>
-                  </div>
                 </CardContent>
               </Card>
             </Link>

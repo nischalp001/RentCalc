@@ -6,13 +6,6 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
   MapPin,
-  BedDouble,
-  Bath,
-  Square,
-  Bike,
-  Car,
-  Droplets,
-  Wifi,
   Plus,
   User,
   Copy,
@@ -34,16 +27,22 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
 import { useUser } from "@/lib/user-context";
+import { getTodayBsDate } from "@/lib/date-utils";
 import {
+  approveOwnerPendingRequest,
   createPropertyTenant,
   createPropertyTenantByUserId,
   deleteProperty,
   deletePropertyTenant,
+  fetchOwnerPendingApprovalRequests,
   fetchBills,
   fetchProperties,
   fetchPropertyTenants,
+  getEffectivePropertyRent,
   getBillSectionSummary,
+  rejectOwnerPendingRequest,
   type BillRecord,
+  type OwnerApprovalRequest,
   type PropertyRecord,
   type PropertyTenantRecord,
 } from "@/lib/rental-data";
@@ -87,6 +86,14 @@ export default function PropertyDetailPage() {
   const [deletePropertyConfirmationText, setDeletePropertyConfirmationText] = useState("");
   const [deletePropertySubmitting, setDeletePropertySubmitting] = useState(false);
   const [deletePropertyError, setDeletePropertyError] = useState<string | null>(null);
+  const [pendingOwnerRequests, setPendingOwnerRequests] = useState<OwnerApprovalRequest[]>([]);
+  const [ownerRequestDialogOpen, setOwnerRequestDialogOpen] = useState(false);
+  const [selectedOwnerRequest, setSelectedOwnerRequest] = useState<OwnerApprovalRequest | null>(null);
+  const [ownerApprovalRent, setOwnerApprovalRent] = useState("");
+  const [ownerApprovalDateJoined, setOwnerApprovalDateJoined] = useState("");
+  const [ownerRequestSubmitting, setOwnerRequestSubmitting] = useState(false);
+  const [ownerRequestError, setOwnerRequestError] = useState<string | null>(null);
+  const [ownerRequestAutoOpened, setOwnerRequestAutoOpened] = useState(false);
 
   const propertyCode = useMemo(
     () => (property?.property_code && /^\d{10}$/.test(property.property_code) ? property.property_code : ""),
@@ -105,6 +112,12 @@ export default function PropertyDetailPage() {
       setProperty(found);
       setBills(billData);
       setTenants(tenantData);
+      if (found && found.owner_profile_id === user.profileId) {
+        const requests = await fetchOwnerPendingApprovalRequests(found.id);
+        setPendingOwnerRequests(requests);
+      } else {
+        setPendingOwnerRequests([]);
+      }
       setError(null);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Failed to load property");
@@ -117,8 +130,7 @@ export default function PropertyDetailPage() {
     if (!Number.isNaN(id)) {
       load();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, user.profileId]);
 
   const resetTenantForm = () => {
     setTenantName("");
@@ -145,23 +157,31 @@ export default function PropertyDetailPage() {
     return parsed;
   };
 
+  const requireTenantDateJoined = () => {
+    const trimmed = tenantDateJoined.trim();
+    if (!trimmed) {
+      throw new Error("Date joined is required.");
+    }
+    return trimmed;
+  };
+
   const handleAddTenant = async () => {
     setTenantError(null);
     setTenantSubmitting(true);
     try {
       const monthlyRent = resolveTenantMonthlyRent();
+      const dateJoined = requireTenantDateJoined();
       await createPropertyTenant({
         propertyId: id,
         tenantName,
         tenantEmail,
         tenantPhone,
         monthlyRent,
-        dateJoined: tenantDateJoined,
+        dateJoined,
       });
       setAddTenantOpen(false);
       resetTenantForm();
-      const updated = await fetchPropertyTenants(id);
-      setTenants(updated);
+      await load();
     } catch (caughtError) {
       setTenantError(caughtError instanceof Error ? caughtError.message : "Failed to add tenant");
     } finally {
@@ -174,19 +194,90 @@ export default function PropertyDetailPage() {
     setTenantSubmitting(true);
     try {
       const monthlyRent = resolveTenantMonthlyRent();
+      const dateJoined = requireTenantDateJoined();
       await createPropertyTenantByUserId({
         propertyId: id,
         tenantAppUserId: tenantUniqueId,
         monthlyRent,
+        dateJoined,
       });
       setAddTenantOpen(false);
       resetTenantForm();
-      const updated = await fetchPropertyTenants(id);
-      setTenants(updated);
+      await load();
     } catch (caughtError) {
-      setTenantError(caughtError instanceof Error ? caughtError.message : "Failed to connect tenant");
+      setTenantError(caughtError instanceof Error ? caughtError.message : "Failed to send tenant request");
     } finally {
       setTenantSubmitting(false);
+    }
+  };
+
+  const openOwnerRequestDialog = (request: OwnerApprovalRequest) => {
+    const defaultRent = getEffectivePropertyRent(property);
+    setSelectedOwnerRequest(request);
+    setOwnerApprovalRent(Number.isFinite(defaultRent) ? String(defaultRent) : "");
+    setOwnerApprovalDateJoined(getTodayBsDate());
+    setOwnerRequestError(null);
+    setOwnerRequestDialogOpen(true);
+  };
+
+  const closeOwnerRequestDialog = () => {
+    setOwnerRequestDialogOpen(false);
+    setSelectedOwnerRequest(null);
+    setOwnerApprovalRent("");
+    setOwnerApprovalDateJoined("");
+    setOwnerRequestError(null);
+    setOwnerRequestSubmitting(false);
+  };
+
+  const handleApproveOwnerRequest = async () => {
+    if (!selectedOwnerRequest) {
+      setOwnerRequestError("Request not found.");
+      return;
+    }
+
+    const parsedRent = Number(ownerApprovalRent.trim());
+    if (!Number.isFinite(parsedRent) || parsedRent < 0) {
+      setOwnerRequestError("Monthly rent must be a non-negative number.");
+      return;
+    }
+    if (!ownerApprovalDateJoined.trim()) {
+      setOwnerRequestError("Date joined is required.");
+      return;
+    }
+
+    setOwnerRequestError(null);
+    setOwnerRequestSubmitting(true);
+    try {
+      await approveOwnerPendingRequest({
+        tenantRowId: selectedOwnerRequest.id,
+        monthlyRent: parsedRent,
+        dateJoined: ownerApprovalDateJoined.trim(),
+      });
+      closeOwnerRequestDialog();
+      await load();
+    } catch (caughtError) {
+      setOwnerRequestError(caughtError instanceof Error ? caughtError.message : "Failed to approve request");
+    } finally {
+      setOwnerRequestSubmitting(false);
+    }
+  };
+
+  const handleRejectOwnerRequest = async () => {
+    if (!selectedOwnerRequest) {
+      setOwnerRequestError("Request not found.");
+      return;
+    }
+
+    setOwnerRequestError(null);
+    setOwnerRequestSubmitting(true);
+    try {
+      await rejectOwnerPendingRequest(selectedOwnerRequest.id);
+      closeOwnerRequestDialog();
+      await load();
+    } catch (caughtError) {
+      setOwnerRequestError(caughtError instanceof Error ? caughtError.message : "Failed to reject request");
+    } finally {
+      setOwnerRequestSubmitting(false);
     }
   };
 
@@ -251,6 +342,30 @@ export default function PropertyDetailPage() {
     }
   };
 
+  useEffect(() => {
+    setOwnerRequestAutoOpened(false);
+  }, [id]);
+
+  useEffect(() => {
+    if (!property || property.owner_profile_id !== user.profileId) {
+      return;
+    }
+    if (ownerRequestAutoOpened || ownerRequestDialogOpen) {
+      return;
+    }
+    if (pendingOwnerRequests.length === 0) {
+      return;
+    }
+    openOwnerRequestDialog(pendingOwnerRequests[0]);
+    setOwnerRequestAutoOpened(true);
+  }, [
+    ownerRequestAutoOpened,
+    ownerRequestDialogOpen,
+    pendingOwnerRequests,
+    property,
+    user.profileId,
+  ]);
+
   if (loading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading property...</div>;
   }
@@ -277,30 +392,37 @@ export default function PropertyDetailPage() {
     ? descriptionText
     : `${descriptionWords.slice(0, descriptionPreviewWordCount).join(" ")}...`;
 
-  const facilities = [
-    { icon: BedDouble, label: `${property.bedrooms ?? 0} Bedrooms` },
-    { icon: Bath, label: `${property.bathrooms ?? 0} Bathrooms` },
-    { icon: Square, label: `${property.sqft ?? 0} Sq.ft` },
-    { icon: Bike, label: property.bike_parking === "yes" ? "Bike Parking" : "No Bike Parking" },
-    { icon: Car, label: property.car_parking === "yes" ? `${property.car_parking_spaces ?? 0} Car Spaces` : "No Car Parking" },
-    { icon: Droplets, label: property.water_supply ? "Water Supply" : "No Water Supply" },
-    { icon: Wifi, label: property.wifi ? "WiFi Available" : "No WiFi" },
-  ];
-
   const hasTenants = tenants.length > 0;
   const activeTenant = tenants.find((tenant) => tenant.status === "active") || tenants[0] || null;
   const tenantToDelete = activeTenant;
-  const monthlyRent = Number(activeTenant?.monthly_rent ?? property.desired_rent ?? property.price ?? 0);
+  const monthlyRent = Number(activeTenant?.monthly_rent ?? getEffectivePropertyRent(property));
+  const defaultTenantMonthlyRent = getEffectivePropertyRent(property);
+  const normalizedPropertyType = property.property_type?.trim().toLowerCase() || "";
+  const supportsBhkType = ["flat", "house", "bnb"].includes(normalizedPropertyType);
+  const bhkType = supportsBhkType && property.bedrooms ? `${property.bedrooms}BHK` : "Not applicable";
   const isOwner = property.owner_profile_id === user.profileId;
+  const openAddTenantDialog = () => {
+    resetTenantForm();
+    setTenantMonthlyRent(Number.isFinite(defaultTenantMonthlyRent) ? String(defaultTenantMonthlyRent) : "");
+    setAddTenantOpen(true);
+  };
 
   return (
     <div className="space-y-6">
-      <Button variant="ghost" asChild>
-        <Link href="/properties">
-          <ArrowLeft className="mr-2 h-4 w-4" />
-          Back to Properties
-        </Link>
-      </Button>
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" asChild>
+          <Link href="/properties">
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Back to Properties
+          </Link>
+        </Button>
+        {isOwner && !hasTenants && (
+          <Button className="h-12 px-6 text-base font-semibold shadow-sm" onClick={openAddTenantDialog}>
+            <Plus className="mr-2 h-5 w-5" />
+            Add Tenant
+          </Button>
+        )}
+      </div>
 
       <div className="grid gap-3 md:grid-cols-3">
         <Card className="md:col-span-3 overflow-hidden">
@@ -332,14 +454,8 @@ export default function PropertyDetailPage() {
             <h1 className="text-2xl font-semibold">{property.property_name}</h1>
             <p className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
               <MapPin className="h-4 w-4" />
-              {property.location || property.address || "-"}
+              {property.location || "-"}
             </p>
-            <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
-              <span>Monthly Rent: NPR {monthlyRent.toLocaleString()}</span>
-              <span>{property.bedrooms ?? 0} bed</span>
-              <span>{property.bathrooms ?? 0} bath</span>
-              <span>{property.sqft ?? 0} sq.ft</span>
-            </div>
           </div>
 
           <Tabs defaultValue="property-details">
@@ -351,13 +467,31 @@ export default function PropertyDetailPage() {
             <TabsContent value="property-details" className="space-y-4">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Monthly Rent</CardTitle>
+                  <CardTitle className="text-base">Property Information</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-lg font-semibold">{formatNpr(monthlyRent)}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Source: {activeTenant?.monthly_rent != null ? "Tenant rent" : property.desired_rent != null ? "Desired rent" : "Property price"}
-                  </p>
+                  <div className="grid gap-2 text-sm sm:grid-cols-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Type</p>
+                      <p>{property.property_type || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">BHK Type</p>
+                      <p>{bhkType}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Monthly Rent</p>
+                      <p>{formatNpr(monthlyRent)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Interval</p>
+                      <p>{property.interval || "-"}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Square Feet</p>
+                      <p>{property.sqft != null ? `${property.sqft} sq.ft` : "Not provided"}</p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
 
@@ -377,22 +511,6 @@ export default function PropertyDetailPage() {
                       {descriptionExpanded ? "Show less" : "Show more"}
                     </Button>
                   )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base">Facilities</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    {facilities.map((facility) => (
-                      <div key={facility.label} className="flex items-center gap-2 text-sm">
-                        <facility.icon className="h-4 w-4 text-muted-foreground" />
-                        <span>{facility.label}</span>
-                      </div>
-                    ))}
-                  </div>
                 </CardContent>
               </Card>
 
@@ -549,25 +667,46 @@ export default function PropertyDetailPage() {
             </CardContent>
           </Card>
 
+          {pendingOwnerRequests.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Pending Tenant Requests</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {pendingOwnerRequests.map((request) => (
+                  <div key={request.id} className="rounded-md border p-3 text-sm">
+                    <p className="font-medium">{request.tenantName} wants to join this property</p>
+                    <p className="text-xs text-muted-foreground">{request.tenantEmail || "No email"}</p>
+                    <p className="text-xs text-muted-foreground">{request.tenantPhone || "No phone"}</p>
+                    <Button
+                      size="sm"
+                      className="mt-3"
+                      variant="outline"
+                      onClick={() => openOwnerRequestDialog(request)}
+                    >
+                      Review Request
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
           {!hasTenants ? (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Add Tenant</CardTitle>
+                <CardTitle className="text-base">Tenant Actions</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Add tenant manually to this property.
+                  Use the Add Tenant button at the top-right to add a tenant.
                 </p>
-                <Button className="w-full" onClick={() => setAddTenantOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  Add Tenant
-                </Button>
               </CardContent>
             </Card>
           ) : (
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Delete Tenant</CardTitle>
+                <CardTitle className="text-base">Remove Tenant</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-1 rounded-md border bg-muted/30 p-3 text-sm">
@@ -586,7 +725,7 @@ export default function PropertyDetailPage() {
                   }}
                 >
                   <Trash2 className="mr-2 h-4 w-4" />
-                  Delete Tenant
+                  Remove Tenant
                 </Button>
               </CardContent>
             </Card>
@@ -623,16 +762,16 @@ export default function PropertyDetailPage() {
       <Dialog open={addTenantOpen} onOpenChange={setAddTenantOpen}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Add Tenant Manually</DialogTitle>
+            <DialogTitle>Add your tenant</DialogTitle>
             <DialogDescription>
-              Choose how you want to add tenant for this property.
+              Choose how you want to connect a tenant for this property.
             </DialogDescription>
           </DialogHeader>
 
           <Tabs value={tenantMode} onValueChange={(value) => setTenantMode(value as "code" | "manual")}>
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="code">Add with Property Code</TabsTrigger>
-              <TabsTrigger value="manual">Manual Entry</TabsTrigger>
+              <TabsTrigger value="manual">Add your tenant</TabsTrigger>
             </TabsList>
 
             <TabsContent value="code" className="space-y-3 pt-3">
@@ -662,7 +801,7 @@ export default function PropertyDetailPage() {
                 </div>
               </div>
               <p className="text-sm text-muted-foreground">
-                Share this 10-digit code with the tenant. They can enter it to add this property in their list.
+                Share this 10-digit code with the tenant. They can enter it to request joining this property.
               </p>
               <div className="space-y-2">
                 <Label>Tenant Unique ID</Label>
@@ -672,7 +811,7 @@ export default function PropertyDetailPage() {
                   placeholder="Enter tenant unique ID (e.g. USR1234AB)"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Enter the tenant unique ID to connect that user and add them as tenant for this property.
+                  Enter the tenant unique ID to send a confirmation request to that user.
                 </p>
               </div>
               <div className="space-y-2">
@@ -685,9 +824,16 @@ export default function PropertyDetailPage() {
                   placeholder="e.g. 25000"
                 />
               </div>
+              <div className="space-y-2">
+                <Label>Date Joined (Nepali)</Label>
+                <NepaliDateInput value={tenantDateJoined} onChange={setTenantDateJoined} />
+              </div>
               {tenantError && <p className="text-sm text-destructive">{tenantError}</p>}
-              <Button onClick={handleAddTenantByUniqueId} disabled={tenantSubmitting || !tenantUniqueId.trim()}>
-                {tenantSubmitting ? "Connecting..." : "Connect Tenant"}
+              <Button
+                onClick={handleAddTenantByUniqueId}
+                disabled={tenantSubmitting || !tenantUniqueId.trim() || !tenantDateJoined.trim()}
+              >
+                {tenantSubmitting ? "Sending..." : "Send Request"}
               </Button>
             </TabsContent>
 
@@ -719,7 +865,7 @@ export default function PropertyDetailPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Date Joined (optional, Nepali)</Label>
+                <Label>Date Joined (Nepali)</Label>
                 <NepaliDateInput value={tenantDateJoined} onChange={setTenantDateJoined} />
               </div>
               {tenantError && <p className="text-sm text-destructive">{tenantError}</p>}
@@ -729,7 +875,7 @@ export default function PropertyDetailPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddTenantOpen(false)}>Close</Button>
             {tenantMode === "manual" && (
-              <Button onClick={handleAddTenant} disabled={tenantSubmitting}>
+              <Button onClick={handleAddTenant} disabled={tenantSubmitting || !tenantDateJoined.trim()}>
                 {tenantSubmitting ? "Adding..." : "Add Tenant"}
               </Button>
             )}
@@ -737,14 +883,62 @@ export default function PropertyDetailPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={ownerRequestDialogOpen} onOpenChange={(open) => (open ? setOwnerRequestDialogOpen(true) : closeOwnerRequestDialog())}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Tenant Connection Confirmation</DialogTitle>
+            <DialogDescription>
+              {selectedOwnerRequest
+                ? `${selectedOwnerRequest.tenantName} wants to be your tenant for ${selectedOwnerRequest.propertyName}.`
+                : "Review this tenant request."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label>Monthly Rent (NPR)</Label>
+              <Input
+                min={0}
+                type="number"
+                value={ownerApprovalRent}
+                onChange={(event) => setOwnerApprovalRent(event.target.value)}
+                placeholder="e.g. 25000"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Date Joined (Nepali)</Label>
+              <NepaliDateInput value={ownerApprovalDateJoined} onChange={setOwnerApprovalDateJoined} />
+            </div>
+          </div>
+
+          {ownerRequestError && <p className="text-sm text-destructive">{ownerRequestError}</p>}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => void handleRejectOwnerRequest()}
+              disabled={ownerRequestSubmitting}
+            >
+              Reject
+            </Button>
+            <Button
+              onClick={() => void handleApproveOwnerRequest()}
+              disabled={ownerRequestSubmitting || !ownerApprovalRent.trim() || !ownerApprovalDateJoined.trim()}
+            >
+              {ownerRequestSubmitting ? "Confirming..." : "Confirm & Add Tenant"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={deleteTenantOpen} onOpenChange={(open) => (open ? setDeleteTenantOpen(true) : closeDeleteDialog())}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{deleteStep === 1 ? "Warning" : "Confirm Tenant Deletion"}</DialogTitle>
+            <DialogTitle>{deleteStep === 1 ? "Warning" : "Confirm Tenant Removal"}</DialogTitle>
             <DialogDescription>
               {deleteStep === 1
-                ? "Deleting a tenant will remove the tenant and reset all bills for this property."
-                : `This action is permanent. Click confirm only if you want to delete ${tenantToDelete?.tenant_name || "this tenant"} now.`}
+                ? "Removing a tenant will remove the tenant and delete all bills linked to this property."
+                : `This action is permanent. Click confirm only if you want to remove ${tenantToDelete?.tenant_name || "this tenant"} now.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -756,7 +950,7 @@ export default function PropertyDetailPage() {
               <Button onClick={() => setDeleteStep(2)}>Continue</Button>
             ) : (
               <Button variant="destructive" onClick={handleDeleteTenant} disabled={deleteSubmitting}>
-                {deleteSubmitting ? "Deleting..." : "Confirm Delete"}
+                {deleteSubmitting ? "Removing..." : "Confirm Remove"}
               </Button>
             )}
           </DialogFooter>

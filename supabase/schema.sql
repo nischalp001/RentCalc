@@ -50,67 +50,55 @@ create table if not exists public.properties (
   property_code text primary key default public.next_property_code(),
   owner_profile_id uuid references public.profiles(id) on delete set null,
   property_name text not null,
-  name text,
   property_type text not null,
   currency text not null default 'NPR',
   price numeric(12,2) not null,
   desired_rent numeric(12,2) not null default 0,
-  rent text,
   interval text not null default 'monthly',
-  address text,
   location text,
-  city text,
-  rooms int not null default 0,
   bedrooms int not null default 0,
-  bathrooms int not null default 0,
-  kitchens int not null default 0,
-  dinings int not null default 0,
-  livings int not null default 0,
   sqft int,
-  bike_parking text default 'no',
-  car_parking text default 'no',
-  car_parking_spaces int not null default 0,
-  water_supply boolean not null default false,
-  wifi boolean not null default false,
-  furnished_level text not null default 'none' check (furnished_level in ('none', 'semi', 'full')),
-  services text[] not null default '{}',
   description text,
-  status text not null default 'active',
-  due_date text,
-  lease_end text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
-alter table if exists public.properties add column if not exists car_parking_spaces int not null default 0;
-alter table if exists public.properties add column if not exists water_supply boolean not null default false;
-alter table if exists public.properties add column if not exists wifi boolean not null default false;
-alter table if exists public.properties add column if not exists furnished_level text not null default 'none';
 alter table if exists public.properties add column if not exists desired_rent numeric(12,2) not null default 0;
+update public.properties
+set location = coalesce(nullif(location, ''), nullif(address, ''), nullif(city, ''))
+where coalesce(nullif(location, ''), nullif(address, ''), nullif(city, '')) is not null;
+alter table if exists public.properties
+  drop column if exists name,
+  drop column if exists rent,
+  drop column if exists address,
+  drop column if exists city,
+  drop column if exists rooms,
+  drop column if exists bathrooms,
+  drop column if exists kitchens,
+  drop column if exists dinings,
+  drop column if exists livings,
+  drop column if exists bike_parking,
+  drop column if exists car_parking,
+  drop column if exists car_parking_spaces,
+  drop column if exists water_supply,
+  drop column if exists wifi,
+  drop column if exists furnished_level,
+  drop column if exists services,
+  drop column if exists status,
+  drop column if exists due_date,
+  drop column if exists lease_end;
 
 -- Normalize legacy negative values before any row updates/backfills.
 update public.properties
 set
   price = greatest(coalesce(price, 0), 0),
   desired_rent = greatest(coalesce(desired_rent, price, 0), 0),
-  rooms = greatest(coalesce(rooms, 0), 0),
   bedrooms = greatest(coalesce(bedrooms, 0), 0),
-  bathrooms = greatest(coalesce(bathrooms, 0), 0),
-  kitchens = greatest(coalesce(kitchens, 0), 0),
-  dinings = greatest(coalesce(dinings, 0), 0),
-  livings = greatest(coalesce(livings, 0), 0),
-  sqft = case when sqft is null then null else greatest(sqft, 0) end,
-  car_parking_spaces = greatest(coalesce(car_parking_spaces, 0), 0)
+  sqft = case when sqft is null then null else greatest(sqft, 0) end
 where
   price < 0
-  or rooms < 0
   or bedrooms < 0
-  or bathrooms < 0
-  or kitchens < 0
-  or dinings < 0
-  or livings < 0
   or (sqft is not null and sqft < 0)
-  or car_parking_spaces < 0
   or desired_rent < 0;
 
 -- Residential listings use bedrooms as BHK type.
@@ -265,10 +253,13 @@ begin
       add constraint properties_desired_rent_non_negative check (desired_rent >= 0) not valid;
   end if;
 
-  if not exists (select 1 from pg_constraint where conname = 'properties_rooms_non_negative') then
-    alter table public.properties
-      add constraint properties_rooms_non_negative check (rooms >= 0) not valid;
-  end if;
+  alter table public.properties drop constraint if exists properties_rooms_non_negative;
+  alter table public.properties drop constraint if exists properties_bathrooms_non_negative;
+  alter table public.properties drop constraint if exists properties_kitchens_non_negative;
+  alter table public.properties drop constraint if exists properties_dinings_non_negative;
+  alter table public.properties drop constraint if exists properties_livings_non_negative;
+  alter table public.properties drop constraint if exists properties_car_parking_spaces_non_negative;
+  alter table public.properties drop constraint if exists properties_furnished_level_check;
 
   if not exists (select 1 from pg_constraint where conname = 'properties_bedrooms_non_negative') then
     alter table public.properties
@@ -283,39 +274,9 @@ begin
       ) not valid;
   end if;
 
-  if not exists (select 1 from pg_constraint where conname = 'properties_bathrooms_non_negative') then
-    alter table public.properties
-      add constraint properties_bathrooms_non_negative check (bathrooms >= 0) not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'properties_kitchens_non_negative') then
-    alter table public.properties
-      add constraint properties_kitchens_non_negative check (kitchens >= 0) not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'properties_dinings_non_negative') then
-    alter table public.properties
-      add constraint properties_dinings_non_negative check (dinings >= 0) not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'properties_livings_non_negative') then
-    alter table public.properties
-      add constraint properties_livings_non_negative check (livings >= 0) not valid;
-  end if;
-
   if not exists (select 1 from pg_constraint where conname = 'properties_sqft_non_negative') then
     alter table public.properties
       add constraint properties_sqft_non_negative check (sqft is null or sqft >= 0) not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'properties_car_parking_spaces_non_negative') then
-    alter table public.properties
-      add constraint properties_car_parking_spaces_non_negative check (car_parking_spaces >= 0) not valid;
-  end if;
-
-  if not exists (select 1 from pg_constraint where conname = 'properties_furnished_level_check') then
-    alter table public.properties
-      add constraint properties_furnished_level_check check (furnished_level in ('none', 'semi', 'full')) not valid;
   end if;
 
   if not exists (select 1 from pg_constraint where conname = 'property_tenants_monthly_rent_non_negative') then

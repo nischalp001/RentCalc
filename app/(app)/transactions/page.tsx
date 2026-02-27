@@ -18,6 +18,7 @@ import {
   fetchBills,
   fetchProperties,
   fetchPropertyTenants,
+  getEffectivePropertyRent,
   getBillPaymentSummary,
   getBillSectionSummary,
   submitBillPaymentClaim,
@@ -279,7 +280,7 @@ export default function TransactionsPage() {
       initializedPropertyIdRef.current = selectedPropertyId;
       usageAutofillKeyRef.current = "";
       rentAutofillKeyRef.current = "";
-      setBaseRent(String(selectedProperty.desired_rent ?? selectedProperty.price ?? ""));
+      setBaseRent(String(getEffectivePropertyRent(selectedProperty)));
       setDue("");
       setElectricityPreviousUnit("");
       setElectricityCurrentUnit("");
@@ -374,7 +375,7 @@ export default function TransactionsPage() {
         const previousSections = getBillSectionSummary(previousBillForTenant);
         setBaseRent(String(previousSections.rentPerMonth));
       } else if (selectedProperty) {
-        setBaseRent(String(selectedProperty.desired_rent ?? selectedProperty.price ?? ""));
+        setBaseRent(String(getEffectivePropertyRent(selectedProperty)));
       }
     }
 
@@ -543,7 +544,7 @@ export default function TransactionsPage() {
         latestBill,
         latestSections,
         tenantName: latestBill?.tenant_name || "No tenant assigned",
-        rentPerMonth: latestSections?.rentPerMonth ?? Number(property.desired_rent ?? property.price ?? 0),
+        rentPerMonth: latestSections?.rentPerMonth ?? getEffectivePropertyRent(property),
       };
     });
   };
@@ -565,6 +566,10 @@ export default function TransactionsPage() {
   const selectedBillPreviewPayments = useMemo(
     () => (selectedBillPreview ? getBillPaymentSummary(selectedBillPreview) : null),
     [selectedBillPreview]
+  );
+  const selectedBillPreviewCanVerifyPaid = useMemo(
+    () => Boolean(selectedBillPreviewPayments && selectedBillPreviewPayments.remainingAmount > 0),
+    [selectedBillPreviewPayments]
   );
 
   const selectedBillPreviewProperty = useMemo(
@@ -599,16 +604,17 @@ export default function TransactionsPage() {
   };
 
   const openBillPreview = (bill: BillRecord, mode: BillPreviewMode = "view") => {
+    const paymentSummary = getBillPaymentSummary(bill);
+    const nextMode = mode === "pay" && paymentSummary.remainingAmount <= 0 ? "view" : mode;
     setSelectedBillPreview(bill);
-    setBillPreviewMode(mode);
+    setBillPreviewMode(nextMode);
     setBillPayRemarks("");
     setBillPayEvidenceFile(null);
     setBillPayError(null);
     setBillVerifyError(null);
     setBillVerifyingClaimId(null);
 
-    const paymentSummary = getBillPaymentSummary(bill);
-    if (mode === "pay") {
+    if (nextMode === "pay") {
       setBillPayAmount(paymentSummary.remainingAmount.toFixed(2));
       return;
     }
@@ -641,6 +647,9 @@ export default function TransactionsPage() {
     setBillPaySubmitting(true);
 
     try {
+      if (selectedBillPreviewPayments.remainingAmount <= 0) {
+        throw new Error("No remaining balance to verify.");
+      }
       const parsedAmount = Number(billPayAmount.trim());
       if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
         throw new Error("Paid amount must be greater than 0.");
@@ -677,13 +686,13 @@ export default function TransactionsPage() {
       setBillPayRemarks("");
       setBillPayEvidenceFile(null);
     } catch (caughtError) {
-      setBillPayError(caughtError instanceof Error ? caughtError.message : "Failed to submit payment claim");
+      setBillPayError(caughtError instanceof Error ? caughtError.message : "Failed to submit paid verification");
     } finally {
       setBillPaySubmitting(false);
     }
   };
 
-  const handleVerifyBillPaymentClaim = async (claimId: string) => {
+  const handleVerifyBillPaymentClaim = async (claimId: string, approve = true) => {
     if (!selectedBillPreview || selectedBillPreviewIsTenantSide) {
       return;
     }
@@ -695,11 +704,11 @@ export default function TransactionsPage() {
         billId: selectedBillPreview.id,
         claimId,
         verifier: "owner",
-        approve: true,
+        approve,
       });
       applyUpdatedBill(updated);
     } catch (caughtError) {
-      setBillVerifyError(caughtError instanceof Error ? caughtError.message : "Failed to verify payment claim");
+      setBillVerifyError(caughtError instanceof Error ? caughtError.message : "Failed to process payment claim");
     } finally {
       setBillVerifyingClaimId(null);
     }
@@ -787,7 +796,7 @@ export default function TransactionsPage() {
                         <div className="space-y-1">
                           <p className="text-sm font-medium">{tracker.property.property_name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {tracker.property.location || tracker.property.address || tracker.property.city || "-"}
+                            {tracker.property.location || "-"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             Tenant: {tracker.tenantName} | Rent: {formatNpr(tracker.rentPerMonth)}
@@ -829,8 +838,13 @@ export default function TransactionsPage() {
                                         <Button type="button" size="sm" variant="outline" onClick={() => openBillPreview(bill, "view")}>
                                           View Bill Popup
                                         </Button>
-                                        <Button type="button" size="sm" onClick={() => openBillPreview(bill, "verify")}>
-                                          Verify
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          onClick={() => openBillPreview(bill, "verify")}
+                                          disabled={paymentSummary.remainingAmount <= 0}
+                                        >
+                                          Verify Payment
                                         </Button>
                                       </div>
                                     </>
@@ -867,7 +881,7 @@ export default function TransactionsPage() {
                         <div className="space-y-1">
                           <p className="text-sm font-medium">{tracker.property.property_name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {tracker.property.location || tracker.property.address || tracker.property.city || "-"}
+                            {tracker.property.location || "-"}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             Tenant: {tracker.tenantName} | Rent: {formatNpr(tracker.rentPerMonth)}
@@ -909,8 +923,13 @@ export default function TransactionsPage() {
                                         <Button type="button" size="sm" variant="outline" onClick={() => openBillPreview(bill, "view")}>
                                           View Bill Popup
                                         </Button>
-                                        <Button type="button" size="sm" onClick={() => openBillPreview(bill, "pay")}>
-                                          Pay Bill
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          onClick={() => openBillPreview(bill, "pay")}
+                                          disabled={paymentSummary.remainingAmount <= 0}
+                                        >
+                                          Verify Paid
                                         </Button>
                                       </div>
                                     </>
@@ -996,34 +1015,61 @@ export default function TransactionsPage() {
               {selectedBillPreviewPayments ? (
                 <>
                   <div className="space-y-2 rounded-md border px-2 py-2 text-xs">
-                    <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(selectedBillPreviewPayments.totalPaid)}</span></div>
-                    <div className="flex justify-between">
-                      <span>{selectedBillPreviewPayments.surplusAmount > 0 ? "Surplus" : "Remaining"}</span>
-                      <span>
-                        {formatNpr(
-                          selectedBillPreviewPayments.surplusAmount > 0
-                            ? selectedBillPreviewPayments.surplusAmount
-                            : selectedBillPreviewPayments.remainingAmount
-                        )}
-                      </span>
-                    </div>
                     {selectedBillPreviewIsTenantSide ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => {
-                          setBillPreviewMode("pay");
-                          if (!billPayAmount.trim()) {
-                            setBillPayAmount(selectedBillPreviewPayments.remainingAmount.toFixed(2));
-                          }
-                        }}
-                      >
-                        Pay Bill
-                      </Button>
+                      billPreviewMode === "pay" ? (
+                        <>
+                          <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(selectedBillPreviewPayments.totalPaid)}</span></div>
+                          <div className="flex justify-between">
+                            <span>{selectedBillPreviewPayments.surplusAmount > 0 ? "Surplus" : "Remaining"}</span>
+                            <span>
+                              {formatNpr(
+                                selectedBillPreviewPayments.surplusAmount > 0
+                                  ? selectedBillPreviewPayments.surplusAmount
+                                  : selectedBillPreviewPayments.remainingAmount
+                              )}
+                            </span>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              setBillPreviewMode("view");
+                              setBillPayError(null);
+                            }}
+                          >
+                            Hide
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={!selectedBillPreviewCanVerifyPaid}
+                          onClick={() => {
+                            setBillPreviewMode("pay");
+                            if (!billPayAmount.trim()) {
+                              setBillPayAmount(selectedBillPreviewPayments.remainingAmount.toFixed(2));
+                            }
+                          }}
+                        >
+                          Verify Paid
+                        </Button>
+                      )
                     ) : (
-                      <Button type="button" size="sm" onClick={() => setBillPreviewMode("verify")}>
-                        Verify Payments
-                      </Button>
+                      <>
+                        <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(selectedBillPreviewPayments.totalPaid)}</span></div>
+                        <div className="flex justify-between">
+                          <span>{selectedBillPreviewPayments.surplusAmount > 0 ? "Surplus" : "Remaining"}</span>
+                          <span>
+                            {formatNpr(
+                              selectedBillPreviewPayments.surplusAmount > 0
+                                ? selectedBillPreviewPayments.surplusAmount
+                                : selectedBillPreviewPayments.remainingAmount
+                            )}
+                          </span>
+                        </div>
+                      </>
                     )}
                   </div>
 
@@ -1059,8 +1105,13 @@ export default function TransactionsPage() {
                         />
                       </div>
                       {billPayError ? <p className="text-sm text-destructive">{billPayError}</p> : null}
-                      <Button type="button" size="sm" onClick={handleSubmitBillPaymentClaim} disabled={billPaySubmitting}>
-                        {billPaySubmitting ? "Saving..." : "Submit Claim"}
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={handleSubmitBillPaymentClaim}
+                        disabled={billPaySubmitting || !selectedBillPreviewCanVerifyPaid}
+                      >
+                        {billPaySubmitting ? "Saving..." : "Verify Paid"}
                       </Button>
                     </div>
                   ) : null}
@@ -1084,14 +1135,23 @@ export default function TransactionsPage() {
                             </a>
                           ) : null}
                           {!selectedBillPreviewIsTenantSide ? (
-                            <div className="pt-2">
+                            <div className="flex gap-2 pt-2">
                               <Button
                                 type="button"
                                 size="sm"
-                                onClick={() => handleVerifyBillPaymentClaim(claim.id)}
-                                disabled={billVerifyingClaimId === claim.id}
+                                onClick={() => handleVerifyBillPaymentClaim(claim.id, true)}
+                                disabled={billVerifyingClaimId === claim.id || selectedBillPreviewPayments.remainingAmount <= 0}
                               >
-                                {billVerifyingClaimId === claim.id ? "Verifying..." : "Verify"}
+                                {billVerifyingClaimId === claim.id ? "Processing..." : "Verify Payment"}
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleVerifyBillPaymentClaim(claim.id, false)}
+                                disabled={billVerifyingClaimId === claim.id || selectedBillPreviewPayments.remainingAmount <= 0}
+                              >
+                                {billVerifyingClaimId === claim.id ? "Processing..." : "Not Received"}
                               </Button>
                             </div>
                           ) : (
