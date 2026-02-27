@@ -17,21 +17,24 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useUser } from "@/lib/user-context";
+import { formatNepaliDateTimeFromAd } from "@/lib/date-utils";
 import {
   fetchTenantPendingConnectionRequests,
   connectTenantToPropertyByCode,
   fetchBills,
   fetchProperties,
+  fetchPropertyTenants,
   getEffectivePropertyRent,
   getBillPaymentSummary,
   respondToTenantInviteRequest,
   type BillRecord,
   type PropertyRecord,
+  type PropertyTenantRecord,
   type TenantInviteRequest,
 } from "@/lib/rental-data";
 
 const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
-const maxShortcutCards = 4;
+const maxShortcutCards = 2;
 const maxRecentBills = 4;
 export default function DashboardPage() {
   const { user } = useUser();
@@ -48,6 +51,10 @@ export default function DashboardPage() {
   const [pendingInviteRequests, setPendingInviteRequests] = useState<TenantInviteRequest[]>([]);
   const [inviteActionSubmittingId, setInviteActionSubmittingId] = useState<number | null>(null);
   const [inviteActionError, setInviteActionError] = useState<string | null>(null);
+  const [createBillOpen, setCreateBillOpen] = useState(false);
+  const [noPropertyDialogOpen, setNoPropertyDialogOpen] = useState(false);
+  const [noTenantDialogOpen, setNoTenantDialogOpen] = useState(false);
+  const [checkingTenantEligibility, setCheckingTenantEligibility] = useState(false);
 
   const loadDashboardData = useCallback(async () => {
     try {
@@ -186,6 +193,38 @@ export default function DashboardPage() {
     }
   };
 
+  const hasOwnedProperties = useMemo(() => ownedProperties.length > 0, [ownedProperties]);
+
+  const handleOpenCreateBill = async () => {
+    if (!hasOwnedProperties) {
+      setNoPropertyDialogOpen(true);
+      return;
+    }
+
+    setCheckingTenantEligibility(true);
+    try {
+      let foundPropertyWithTenant = false;
+      for (const property of ownedProperties) {
+        const tenantData = await fetchPropertyTenants(property.id);
+        if (tenantData.length > 0) {
+          foundPropertyWithTenant = true;
+          break;
+        }
+      }
+
+      if (!foundPropertyWithTenant) {
+        setNoTenantDialogOpen(true);
+        return;
+      }
+
+      setCreateBillOpen(true);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to verify tenant eligibility for bill creation");
+    } finally {
+      setCheckingTenantEligibility(false);
+    }
+  };
+
   const renderShortcutCards = (entries: PropertyRecord[], emptyMessage: string) => {
     if (entries.length === 0) {
       return (
@@ -197,7 +236,7 @@ export default function DashboardPage() {
 
     return (
       <div className="space-y-3">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 grid-cols-2">
           {entries.slice(0, maxShortcutCards).map((property) => {
             const image = property.property_images?.[0]?.url || "/placeholder.svg";
             return (
@@ -224,11 +263,6 @@ export default function DashboardPage() {
             );
           })}
         </div>
-        {entries.length > maxShortcutCards && (
-          <Button asChild variant="ghost" className="px-0 text-sm">
-            <Link href="/properties">View all properties</Link>
-          </Button>
-        )}
       </div>
     );
   };
@@ -243,21 +277,37 @@ export default function DashboardPage() {
         {entries.map((bill) => {
           const paymentSummary = getBillPaymentSummary(bill);
           return (
-            <Link
+            <div
               key={bill.id}
-              href={`/transactions/${bill.id}`}
-              className="block rounded-md border p-3 text-sm transition-colors hover:bg-muted/30"
+              className="rounded-md border p-3 text-sm"
             >
-              <div className="font-medium">{bill.property_name}</div>
-              <div className="text-muted-foreground">
-                {bill.current_month} | {bill.status}
+              <div className="mb-2 font-medium">{bill.property_name}</div>
+              <div className="grid gap-1 sm:grid-cols-2">
+                <div className="flex justify-between sm:block">
+                  <span className="text-muted-foreground">Bill Date (to be paid)</span>
+                  <div>{bill.current_month}</div>
+                </div>
+                <div className="flex justify-between sm:block">
+                  <span className="text-muted-foreground">Bill Created</span>
+                  <div>{formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                </div>
+                <div className="flex justify-between sm:block">
+                  <span className="text-muted-foreground">Paid Date</span>
+                  <div>{bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}</div>
+                </div>
+                <div className="flex justify-between sm:block">
+                  <span className="text-muted-foreground">Remaining</span>
+                  <div>{formatNpr(paymentSummary.remainingAmount)}</div>
+                </div>
               </div>
-              <div className="text-muted-foreground">
-                {paymentSummary.surplusAmount > 0
-                  ? `Surplus: ${formatNpr(paymentSummary.surplusAmount)}`
-                  : `Remaining: ${formatNpr(paymentSummary.remainingAmount)}`}
+              <div className="pt-2">
+                <Link href={`/transactions/${bill.id}`}>
+                  <Button size="sm" variant="outline">
+                    View Details
+                  </Button>
+                </Link>
               </div>
-            </Link>
+            </div>
           );
         })}
       </div>
@@ -276,6 +326,12 @@ export default function DashboardPage() {
             <Plus className="mr-2 h-4 w-4" />
             Add Property
           </Button>
+          {hasOwnedProperties && (
+            <Button onClick={() => void handleOpenCreateBill()} disabled={checkingTenantEligibility}>
+              <Plus className="mr-2 h-4 w-4" />
+              {checkingTenantEligibility ? "Checking..." : "Create Bill"}
+            </Button>
+          )}
           <Button
             variant="outline"
             onClick={() => {
@@ -395,15 +451,37 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold">Owned Property Shortcuts</h2>
-            {renderShortcutCards(sortedOwnedProperties, "No owned properties found.")}
-          </div>
+          {(sortedOwnedProperties.length > 0 || sortedRentalProperties.length > 0) && (
+            <div className={sortedOwnedProperties.length > 0 && sortedRentalProperties.length > 0 ? "grid gap-8 lg:grid-cols-2" : "space-y-4"}>
+              {sortedOwnedProperties.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">Owned Property Shortcuts</h2>
+                    {sortedOwnedProperties.length > 1 && (
+                      <Button asChild>
+                        <Link href="/properties">View more</Link>
+                      </Button>
+                    )}
+                  </div>
+                  {renderShortcutCards(sortedOwnedProperties, "")}
+                </div>
+              )}
 
-          <div className="space-y-4">
-            <h2 className="text-lg font-semibold">Rented Property Shortcuts</h2>
-            {renderShortcutCards(sortedRentalProperties, "No rented properties found.")}
-          </div>
+              {sortedRentalProperties.length > 0 && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold">Rented Property Shortcuts</h2>
+                    {sortedRentalProperties.length > 1 && (
+                      <Button asChild>
+                        <Link href="/properties">View more</Link>
+                      </Button>
+                    )}
+                  </div>
+                  {renderShortcutCards(sortedRentalProperties, "")}
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="space-y-4">
             <h2 className="text-lg font-semibold">Recent Activity</h2>
@@ -429,6 +507,44 @@ export default function DashboardPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={noPropertyDialogOpen} onOpenChange={setNoPropertyDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cannot Create Bill</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            You do not have any owned property yet. Add a property you own to create bills.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoPropertyDialogOpen(false)}>
+              Close
+            </Button>
+            <Button onClick={() => { setNoPropertyDialogOpen(false); setAddPropertyOpen(true); }}>
+              Add Property
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={noTenantDialogOpen} onOpenChange={setNoTenantDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Cannot Create Bill</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            None of your owned properties have tenants yet. Add a tenant to your property to create bills.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoTenantDialogOpen(false)}>
+              Close
+            </Button>
+            <Button asChild>
+              <Link href="/properties">Add Tenant</Link>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PropertyFormDialog
         open={addPropertyOpen}
@@ -474,6 +590,25 @@ export default function DashboardPage() {
             </Button>
             <Button onClick={handleConnectToProperty} disabled={connectSubmitting || !connectPropertyCode.trim()}>
               {connectSubmitting ? "Sending..." : "Send Request"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createBillOpen} onOpenChange={setCreateBillOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Create Bill - Coming Soon</DialogTitle>
+            <DialogDescription>
+              The bill creation interface will open here. For now, please use the Rent & Transactions page to create bills.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateBillOpen(false)}>
+              Close
+            </Button>
+            <Button asChild>
+              <Link href="/transactions">Go to Rent & Transactions</Link>
             </Button>
           </DialogFooter>
         </DialogContent>

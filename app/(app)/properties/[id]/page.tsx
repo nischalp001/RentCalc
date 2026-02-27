@@ -27,7 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { NepaliDateInput } from "@/components/ui/nepali-date-picker";
 import { useUser } from "@/lib/user-context";
-import { getTodayBsDate } from "@/lib/date-utils";
+import { formatNepaliDateTimeFromAd, getTodayBsDate } from "@/lib/date-utils";
 import {
   approveOwnerPendingRequest,
   createPropertyTenant,
@@ -39,6 +39,7 @@ import {
   fetchProperties,
   fetchPropertyTenants,
   getEffectivePropertyRent,
+  getBillPaymentSummary,
   getBillSectionSummary,
   rejectOwnerPendingRequest,
   type BillRecord,
@@ -60,6 +61,7 @@ export default function PropertyDetailPage() {
 
   const [property, setProperty] = useState<PropertyRecord | null>(null);
   const [bills, setBills] = useState<BillRecord[]>([]);
+  const [selectedBill, setSelectedBill] = useState<BillRecord | null>(null);
   const [tenants, setTenants] = useState<PropertyTenantRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -548,43 +550,30 @@ export default function PropertyDetailPage() {
                 <div className="space-y-2">
                   {bills.map((bill) => {
                     const sections = getBillSectionSummary(bill);
+                    const paymentSummary = getBillPaymentSummary(bill);
                     return (
-                      <div key={bill.id} className="rounded-md border p-3 text-sm space-y-1">
-                        <div className="font-medium">{bill.tenant_name} - {bill.current_month}</div>
-                        <div className="text-muted-foreground capitalize">Status: {bill.status}</div>
-                        <div className="flex justify-between"><span>Rent (per month)</span><span>{formatNpr(sections.rentPerMonth)}</span></div>
-                        <div className="flex justify-between"><span>Due</span><span>{formatNpr(sections.due)}</span></div>
-                        <div className="flex justify-between"><span>Penalty (10% of due)</span><span>{formatNpr(sections.penalty)}</span></div>
-                        <div className="text-xs rounded-md border px-2 py-1">
-                          <div className="flex justify-between"><span>Electricity bill</span><span>{formatNpr(sections.electricity.amount)}</span></div>
-                          <div className="text-muted-foreground">
-                            Prev: {sections.electricity.previousUnit} | Current: {sections.electricity.currentUnit} | Rate: {sections.electricity.rate}
+                      <div key={bill.id} className="rounded-md border p-3 text-sm">
+                        <div className="grid gap-1 sm:grid-cols-2">
+                          <div className="flex justify-between sm:block">
+                            <span className="text-muted-foreground">Bill Date (to be paid)</span>
+                            <div>{bill.current_month}</div>
+                          </div>
+                          <div className="flex justify-between sm:block">
+                            <span className="text-muted-foreground">Bill Created</span>
+                            <div>{formatNepaliDateTimeFromAd(bill.created_at)}</div>
+                          </div>
+                          <div className="flex justify-between sm:block">
+                            <span className="text-muted-foreground">Paid Date</span>
+                            <div>{bill.paid_date ? formatNepaliDateTimeFromAd(bill.paid_date) : "Not paid yet"}</div>
+                          </div>
+                          <div className="flex justify-between sm:block">
+                            <span className="text-muted-foreground">Remaining</span>
+                            <div>{formatNpr(paymentSummary.remainingAmount)}</div>
                           </div>
                         </div>
-                        <div className="text-xs rounded-md border px-2 py-1">
-                          <div className="flex justify-between"><span>Water bill</span><span>{formatNpr(sections.water.amount)}</span></div>
-                          <div className="text-muted-foreground">
-                            Prev: {sections.water.previousUnit} | Current: {sections.water.currentUnit} | Rate: {sections.water.rate}
-                          </div>
-                        </div>
-                        <div className="flex justify-between"><span>Wifi</span><span>{formatNpr(sections.wifi)}</span></div>
-                        <div className="text-xs rounded-md border px-2 py-1">
-                          <div className="flex justify-between"><span>Others</span><span>{formatNpr(sections.othersTotal)}</span></div>
-                          {sections.others.length > 0 ? (
-                            sections.others.map((charge, index) => (
-                              <div key={`${bill.id}-${charge.name}-${index}`} className="flex justify-between text-muted-foreground">
-                                <span>{charge.name}</span>
-                                <span>{formatNpr(charge.amount)}</span>
-                              </div>
-                            ))
-                          ) : (
-                            <div className="text-muted-foreground">No additional charges</div>
-                          )}
-                        </div>
-                        <div className="flex justify-between font-medium"><span>Total</span><span>{formatNpr(sections.total)}</span></div>
-                        <div className="pt-1">
-                          <Button asChild size="sm" variant="outline">
-                            <Link href={`/transactions/${bill.id}`}>View Bill Details</Link>
+                        <div className="pt-2">
+                          <Button size="sm" variant="outline" onClick={() => setSelectedBill(bill)}>
+                            View Details
                           </Button>
                         </div>
                       </div>
@@ -758,6 +747,87 @@ export default function PropertyDetailPage() {
           </div>
         )}
       </div>
+
+      <Dialog
+        open={Boolean(selectedBill)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedBill(null);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Bill Details</DialogTitle>
+            <DialogDescription>
+              {selectedBill ? `${selectedBill.tenant_name} | ${selectedBill.property_name}` : "Bill details"}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedBill ? (
+            <div className="space-y-3 text-sm">
+              {(() => {
+                const sections = getBillSectionSummary(selectedBill);
+                const paymentSummary = getBillPaymentSummary(selectedBill);
+                return (
+                  <>
+                    <div className="flex justify-between"><span>Status</span><span className="capitalize">{selectedBill.status}</span></div>
+                    <div className="flex justify-between"><span>Bill Date (to be paid)</span><span>{selectedBill.current_month}</span></div>
+                    <div className="flex justify-between"><span>Date billed</span><span>{formatNepaliDateTimeFromAd(selectedBill.created_at)}</span></div>
+                    <div className="flex justify-between"><span>Paid Date</span><span>{selectedBill.paid_date ? formatNepaliDateTimeFromAd(selectedBill.paid_date) : "Not paid yet"}</span></div>
+                    <div className="flex justify-between"><span>Rent (per month)</span><span>{formatNpr(sections.rentPerMonth)}</span></div>
+                    <div className="flex justify-between"><span>Due</span><span>{formatNpr(sections.due)}</span></div>
+                    <div className="flex justify-between"><span>Penalty (10% of due)</span><span>{formatNpr(sections.penalty)}</span></div>
+                    <div className="text-xs rounded-md border px-2 py-1">
+                      <div className="flex justify-between"><span>Electricity bill</span><span>{formatNpr(sections.electricity.amount)}</span></div>
+                      <div className="text-muted-foreground">
+                        Prev: {sections.electricity.previousUnit} | Current: {sections.electricity.currentUnit} | Rate: {sections.electricity.rate}
+                      </div>
+                    </div>
+                    <div className="text-xs rounded-md border px-2 py-1">
+                      <div className="flex justify-between"><span>Water bill</span><span>{formatNpr(sections.water.amount)}</span></div>
+                      <div className="text-muted-foreground">
+                        Prev: {sections.water.previousUnit} | Current: {sections.water.currentUnit} | Rate: {sections.water.rate}
+                      </div>
+                    </div>
+                    <div className="flex justify-between"><span>Wifi</span><span>{formatNpr(sections.wifi)}</span></div>
+                    <div className="text-xs rounded-md border px-2 py-1">
+                      <div className="flex justify-between"><span>Others</span><span>{formatNpr(sections.othersTotal)}</span></div>
+                      {sections.others.length > 0 ? (
+                        sections.others.map((charge, index) => (
+                          <div key={`${selectedBill.id}-${charge.name}-${index}`} className="flex justify-between text-muted-foreground">
+                            <span>{charge.name}</span>
+                            <span>{formatNpr(charge.amount)}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-muted-foreground">No additional charges</div>
+                      )}
+                    </div>
+                    <div className="flex justify-between"><span>Total Paid</span><span>{formatNpr(paymentSummary.totalPaid)}</span></div>
+                    <div className="flex justify-between">
+                      <span>{paymentSummary.surplusAmount > 0 ? "Surplus" : "Remaining"}</span>
+                      <span>{formatNpr(paymentSummary.surplusAmount > 0 ? paymentSummary.surplusAmount : paymentSummary.remainingAmount)}</span>
+                    </div>
+                    <div className="flex justify-between font-medium"><span>Total</span><span>{formatNpr(sections.total)}</span></div>
+                  </>
+                );
+              })()}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            {selectedBill ? (
+              <Button asChild variant="outline">
+                <Link href={`/transactions/${selectedBill.id}`}>Open Full Bill Page</Link>
+              </Button>
+            ) : null}
+            <Button variant="outline" onClick={() => setSelectedBill(null)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={addTenantOpen} onOpenChange={setAddTenantOpen}>
         <DialogContent className="sm:max-w-lg">
