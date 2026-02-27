@@ -113,6 +113,12 @@ where
   or car_parking_spaces < 0
   or desired_rent < 0;
 
+-- Residential listings use bedrooms as BHK type.
+update public.properties
+set bedrooms = least(greatest(coalesce(bedrooms, 1), 1), 8)
+where lower(coalesce(property_type, '')) in ('flat', 'house', 'bnb')
+  and (bedrooms is null or bedrooms < 1 or bedrooms > 8);
+
 alter table if exists public.properties add column if not exists property_code text;
 update public.properties
 set property_code = public.next_property_code()
@@ -267,6 +273,14 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'properties_bedrooms_non_negative') then
     alter table public.properties
       add constraint properties_bedrooms_non_negative check (bedrooms >= 0) not valid;
+  end if;
+
+  if not exists (select 1 from pg_constraint where conname = 'properties_residential_bhk_range') then
+    alter table public.properties
+      add constraint properties_residential_bhk_range check (
+        lower(coalesce(property_type, '')) not in ('flat', 'house', 'bnb')
+        or bedrooms between 1 and 8
+      ) not valid;
   end if;
 
   if not exists (select 1 from pg_constraint where conname = 'properties_bathrooms_non_negative') then

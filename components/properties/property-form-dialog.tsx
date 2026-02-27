@@ -63,6 +63,7 @@ type ProfileHealthCheck = {
 };
 
 const descriptionMaxWords = 150;
+const bhkOptions = ["1", "2", "3", "4", "5", "6", "7", "8"] as const;
 
 const createImageEntry = (): ImageEntry => ({
   id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
@@ -113,6 +114,7 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
 
   const [propertyName, setPropertyName] = useState("");
   const [propertyType, setPropertyType] = useState("flat");
+  const [bhkType, setBhkType] = useState<(typeof bhkOptions)[number]>("1");
   const [monthlyRent, setMonthlyRent] = useState("");
   const [interval, setIntervalValue] = useState("monthly");
   const [location, setLocation] = useState("");
@@ -122,10 +124,12 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
   const [images, setImages] = useState<ImageEntry[]>([createImageEntry()]);
 
   const descriptionWordCount = useMemo(() => countWords(description), [description]);
+  const allowsBhkType = propertyType === "flat" || propertyType === "house" || propertyType === "bnb";
 
   const resetForm = () => {
     setPropertyName("");
     setPropertyType("flat");
+    setBhkType("1");
     setMonthlyRent("");
     setIntervalValue("monthly");
     setLocation("");
@@ -324,6 +328,12 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
 
     const parsedMonthlyRent = parseRequiredNonNegative(monthlyRent, "Monthly rent");
     const parsedSqft = parseOptionalNonNegative(sqft, "Square feet");
+    const parsedBhk = Number.parseInt(bhkType, 10);
+    const parsedBedrooms = allowsBhkType ? parsedBhk : 0;
+
+    if (allowsBhkType && (!Number.isInteger(parsedBhk) || parsedBhk < 1 || parsedBhk > 8)) {
+      throw new Error("Please select a BHK type between 1BHK and 8BHK.");
+    }
 
     return {
       propertyName: propertyName.trim(),
@@ -334,7 +344,7 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
       interval: interval.trim(),
       location: location.trim(),
       rooms: 0,
-      bedrooms: 0,
+      bedrooms: parsedBedrooms,
       bathrooms: 0,
       kitchens: 0,
       dinings: 0,
@@ -396,8 +406,8 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
           <Input value={location} onChange={(event) => setLocation(event.target.value)} />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-2 col-span-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="space-y-2">
             <Label>Type</Label>
             <Select value={propertyType} onValueChange={setPropertyType}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -407,6 +417,19 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
                 <SelectItem value="room">Room</SelectItem>
                 <SelectItem value="office">Office</SelectItem>
                 <SelectItem value="bnb">BNB</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>BHK Type</Label>
+            <Select value={bhkType} onValueChange={(value) => setBhkType(value as (typeof bhkOptions)[number])}>
+              <SelectTrigger disabled={!allowsBhkType}>
+                <SelectValue placeholder={allowsBhkType ? "Select BHK" : "Only for flat/house/bnb"} />
+              </SelectTrigger>
+              <SelectContent>
+                {bhkOptions.map((option) => (
+                  <SelectItem key={option} value={option}>{option}BHK</SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>

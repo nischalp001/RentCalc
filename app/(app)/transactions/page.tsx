@@ -82,7 +82,9 @@ export default function TransactionsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [noPropertyDialogOpen, setNoPropertyDialogOpen] = useState(false);
+  const [noTenantDialogOpen, setNoTenantDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [checkingTenantEligibility, setCheckingTenantEligibility] = useState(false);
   const [hasAppliedPropertyPreset, setHasAppliedPropertyPreset] = useState(false);
   const [expandedPropertyId, setExpandedPropertyId] = useState<number | null>(null);
   const [selectedBillPreview, setSelectedBillPreview] = useState<BillRecord | null>(null);
@@ -399,6 +401,9 @@ export default function TransactionsPage() {
     if (!selectedProperty) {
       throw new Error("Property is required.");
     }
+    if (propertyTenants.length === 0) {
+      throw new Error("Cannot create bill because this property has no tenant. Add a tenant first.");
+    }
     if (!tenantName.trim()) {
       throw new Error("Tenant name is required.");
     }
@@ -522,6 +527,7 @@ export default function TransactionsPage() {
   };
 
   const hasOwnedProperties = ownedProperties.length > 0;
+  const selectedPropertyHasTenants = propertyTenants.length > 0;
 
   const mapPropertyTrackers = (entries: PropertyRecord[]) => {
     return entries.map((property) => {
@@ -699,12 +705,34 @@ export default function TransactionsPage() {
     }
   };
 
-  const handleOpenCreateBill = () => {
+  const handleOpenCreateBill = async () => {
     if (!hasOwnedProperties) {
       setNoPropertyDialogOpen(true);
       return;
     }
-    setCreateOpen(true);
+
+    setCheckingTenantEligibility(true);
+    try {
+      let foundPropertyWithTenant = false;
+      for (const property of ownedProperties) {
+        const tenantData = await fetchPropertyTenants(property.id);
+        if (tenantData.length > 0) {
+          foundPropertyWithTenant = true;
+          break;
+        }
+      }
+
+      if (!foundPropertyWithTenant) {
+        setNoTenantDialogOpen(true);
+        return;
+      }
+
+      setCreateOpen(true);
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Failed to verify tenant eligibility for bill creation");
+    } finally {
+      setCheckingTenantEligibility(false);
+    }
   };
 
   return (
@@ -714,9 +742,9 @@ export default function TransactionsPage() {
           <h1 className="text-xl font-semibold lg:text-2xl">Rent & Transactions</h1>
           <p className="text-sm text-muted-foreground">Live rent data from Supabase</p>
         </div>
-        <Button onClick={handleOpenCreateBill}>
+        <Button onClick={() => void handleOpenCreateBill()} disabled={checkingTenantEligibility}>
           <Plus className="mr-2 h-4 w-4" />
-          Create Bill
+          {checkingTenantEligibility ? "Checking..." : "Create Bill"}
         </Button>
       </div>
 
@@ -1142,6 +1170,14 @@ export default function TransactionsPage() {
               </Select>
             </div>
 
+            {selectedProperty && !selectedPropertyHasTenants && (
+              <Card className="border-amber-300/60 bg-amber-50/30">
+                <CardContent className="pt-6 text-sm text-amber-700">
+                  Bill creation is disabled for this property because it has no tenant yet. Add a tenant first.
+                </CardContent>
+              </Card>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
                 <Label>Tenant Name</Label>
@@ -1292,7 +1328,7 @@ export default function TransactionsPage() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreateBill} disabled={submitting}>
+            <Button onClick={handleCreateBill} disabled={submitting || !selectedProperty || !selectedPropertyHasTenants}>
               {submitting ? "Saving..." : "Save Bill"}
             </Button>
           </DialogFooter>
@@ -1309,6 +1345,22 @@ export default function TransactionsPage() {
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setNoPropertyDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={noTenantDialogOpen} onOpenChange={setNoTenantDialogOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Cannot Create Bill</DialogTitle>
+            <DialogDescription>
+              None of your owned properties has a tenant yet. Add a tenant to a property before creating bills.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoTenantDialogOpen(false)}>
               Close
             </Button>
           </DialogFooter>

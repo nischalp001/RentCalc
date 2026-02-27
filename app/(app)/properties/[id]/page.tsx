@@ -77,6 +77,7 @@ export default function PropertyDetailPage() {
   const [tenantMode, setTenantMode] = useState<"code" | "manual">("code");
   const [tenantUniqueId, setTenantUniqueId] = useState("");
   const [copied, setCopied] = useState(false);
+  const [propertyCodeCopied, setPropertyCodeCopied] = useState(false);
   const [deleteTenantOpen, setDeleteTenantOpen] = useState(false);
   const [deleteStep, setDeleteStep] = useState<1 | 2>(1);
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
@@ -395,30 +396,6 @@ export default function PropertyDetailPage() {
                 </CardContent>
               </Card>
 
-              {isOwner && (
-                <Card className="border-destructive/40">
-                  <CardHeader>
-                    <CardTitle className="text-base text-destructive">Property Actions</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <p className="text-sm text-muted-foreground">
-                      Deleting this property removes all tenants and bills linked to it.
-                    </p>
-                    <Button
-                      variant="destructive"
-                      onClick={() => {
-                        setDeletePropertyError(null);
-                        setDeletePropertyStep(1);
-                        setDeletePropertyConfirmationText("");
-                        setDeletePropertyOpen(true);
-                      }}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Delete Property
-                    </Button>
-                  </CardContent>
-                </Card>
-              )}
             </TabsContent>
 
             <TabsContent value="investment-details">
@@ -438,10 +415,15 @@ export default function PropertyDetailPage() {
               {bills.length === 0 ? (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">No bills yet for this property.</p>
-                  {isOwner && (
+                  {isOwner && hasTenants && (
                     <Button asChild size="sm">
                       <Link href={`/transactions?propertyId=${property.id}`}>Create First Bill</Link>
                     </Button>
+                  )}
+                  {isOwner && !hasTenants && (
+                    <p className="text-xs text-amber-700">
+                      Add a tenant first. Bill creation is not allowed when a property has no tenant.
+                    </p>
                   )}
                 </div>
               ) : (
@@ -504,18 +486,41 @@ export default function PropertyDetailPage() {
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <div className="text-muted-foreground">Unique Property ID</div>
-              <div className="rounded-md border bg-muted/30 px-3 py-2 font-mono text-sm">
-                {propertyCode || "Not generated"}
+              <div className="flex items-center gap-2">
+                <div className="flex-1 rounded-md border bg-muted/30 px-3 py-2 font-mono text-sm">
+                  {propertyCode || "Not generated"}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={!propertyCode}
+                  onClick={async () => {
+                    try {
+                      if (!propertyCode) {
+                        return;
+                      }
+                      await navigator.clipboard.writeText(propertyCode);
+                      setPropertyCodeCopied(true);
+                      setTimeout(() => setPropertyCodeCopied(false), 1500);
+                    } catch {
+                      // no-op
+                    }
+                  }}
+                >
+                  {propertyCodeCopied ? <Check className="mr-2 h-4 w-4" /> : <Copy className="mr-2 h-4 w-4" />}
+                  {propertyCodeCopied ? "Copied" : "Copy"}
+                </Button>
               </div>
             </CardContent>
           </Card>
 
-          {hasTenants && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Current Tenants</CardTitle>
-              </CardHeader>
-              <CardContent>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Current Tenants</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {hasTenants ? (
                 <div className="space-y-2">
                   {tenants.map((tenant) => (
                     <div key={tenant.id} className="rounded-md border p-3 text-sm">
@@ -538,9 +543,11 @@ export default function PropertyDetailPage() {
                     </div>
                   ))}
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              ) : (
+                <p className="text-sm text-muted-foreground">No tenants added yet.</p>
+              )}
+            </CardContent>
+          </Card>
 
           {!hasTenants ? (
             <Card>
@@ -585,16 +592,30 @@ export default function PropertyDetailPage() {
             </Card>
           )}
 
-          {!hasTenants && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Current Tenants</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">No tenants added yet.</p>
-              </CardContent>
-            </Card>
-          )}
+          <Card className="border-destructive/40">
+            <CardHeader>
+              <CardTitle className="text-base text-destructive">Property Actions</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Deleting this property removes all tenants and bills linked to it.
+              </p>
+              <Button
+                className="w-full"
+                variant="destructive"
+                onClick={() => {
+                  setDeletePropertyError(null);
+                  setDeletePropertyStep(1);
+                  setDeletePropertyConfirmationText("");
+                  setDeletePropertyOpen(true);
+                }}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete Property
+              </Button>
+            </CardContent>
+          </Card>
+
           </div>
         )}
       </div>

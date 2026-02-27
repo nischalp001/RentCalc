@@ -618,6 +618,13 @@ function validateCreatePropertyInput(input: CreatePropertyInput) {
   assertNonNegativeNumber(input.dinings, "Dinings");
   assertNonNegativeNumber(input.livings, "Livings");
 
+  const normalizedPropertyType = input.propertyType.trim().toLowerCase();
+  if (["flat", "house", "bnb"].includes(normalizedPropertyType)) {
+    if (!Number.isInteger(input.bedrooms) || input.bedrooms < 1 || input.bedrooms > 8) {
+      throw new Error("BHK type must be between 1BHK and 8BHK for flat, house, and BNB properties.");
+    }
+  }
+
   if (typeof input.sqft === "number") {
     assertNonNegativeNumber(input.sqft, "Square feet");
   }
@@ -1508,6 +1515,20 @@ export async function createBill(input: CreateBillInput) {
   validateCreateBillInput(input);
 
   const supabase = getSupabaseBrowserClient();
+  const { data: tenantRows, error: tenantCheckError } = await supabase
+    .from("property_tenants")
+    .select("id")
+    .eq("property_id", input.propertyId)
+    .limit(1);
+
+  if (tenantCheckError) {
+    throw new Error(tenantCheckError.message || "Failed to verify tenant before creating bill");
+  }
+
+  if (!tenantRows || tenantRows.length === 0) {
+    throw new Error("Cannot create bill because this property has no tenant. Add a tenant first.");
+  }
+
   const rentPerMonth = toNumber(input.rentPerMonth ?? input.confirmedRent ?? input.baseRent);
   const due = toNumber(input.due);
   const penalty = toNumber(input.penalty, due * 0.1);
