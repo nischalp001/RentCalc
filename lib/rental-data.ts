@@ -2024,3 +2024,433 @@ export async function createBill(input: CreateBillInput) {
 
   return (fullBill || bill) as BillRecord;
 }
+
+// ---------------------------------------------------------------------------
+// Messaging & Connections
+// ---------------------------------------------------------------------------
+
+export type ChatConnectionRecord = {
+  id: string; // connections.id (uuid) – primary row
+  allConnectionIds: string[]; // all connection IDs for this pair (handles mirror rows)
+  otherProfileId: string;
+  name: string;
+  email: string;
+  phone: string | null;
+  avatar: string | null;
+  role: "landlord" | "tenant"; // the OTHER person's role relative to current user
+  propertyId: number | null;
+  propertyName: string | null;
+  status: "pending" | "active";
+  unreadMessages: number;
+  lastMessage: string | null;
+  lastMessageAt: string | null;
+};
+
+export type ChatMessageRecord = {
+  id: number;
+  connectionId: string;
+  senderProfileId: string;
+  message: string;
+  sentAt: string;
+  readAt: string | null;
+};
+
+/**
+ * Synchronise the `connections` table with active property_tenants,
+ * then return all chat connections for the current user.
+ */
+export async function fetchChatConnections(): Promise<ChatConnectionRecord[]> {
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) return [];
+
+  // ----- 1. Ensure connections rows exist for active tenant-landlord pairs -----
+  // Properties I own ➜ tenants who have profiles
+  const { data: ownedRows } = await supabase
+    .from("properties")
+    .select("id, property_name, owner_profile_id, property_tenants!inner(tenant_profile_id, tenant_name, status)")
+    .eq("owner_profile_id", profileId);
+
+  for (const prop of ownedRows || []) {
+    const tenants = (prop as any).property_tenants as any[] || [];
+    for (const t of tenants) {
+      if (t.status !== "active" || !t.tenant_profile_id) continue;
+      await supabase.from("connections").upsert(
+        {
+          from_profile_id: profileId,
+          to_profile_id: t.tenant_profile_id,
+          role: "tenant",
+          property_id: prop.id,
+          property_name: prop.property_name,
+          status: "active",
+        },
+        { onConflict: "from_profile_id,to_profile_id,role,property_id" }
+      );
+    }
+  }
+
+  // Properties I'm a tenant of ➜ landlord connection
+  const { data: tenantRows } = await supabase
+    .from("property_tenants")
+    .select("property_id, tenant_profile_id, status")
+    .eq("tenant_profile_id", profileId)
+    .eq("status", "active");
+
+  if (tenantRows && tenantRows.length > 0) {
+    const propIds = tenantRows.map((r) => Number(r.property_id));
+    const { data: props } = await supabase
+      .from("properties")
+      .select("id, property_name, owner_profile_id")
+      .in("id", propIds);
+
+    for (const prop of props || []) {
+      if (!prop.owner_profile_id) continue;
+      await supabase.from("connections").upsert(
+        {
+          from_profile_id: profileId,
+          to_profile_id: prop.owner_profile_id,
+          role: "landlord",
+          property_id: prop.id,
+          property_name: prop.property_name,
+          status: "active",
+        },
+        { onConflict: "from_profile_id,to_profile_id,role,property_id" }
+      );
+    }
+  }
+
+  // ----- 2. Fetch connections where I am either side -----
+  const { data: connRows, error } = await supabase
+    .from("connections")
+    .select("*")
+    .or(`from_profile_id.eq.${profileId},to_profile_id.eq.${profileId}`)
+    .order("updated_at", { ascending: false });
+
+  if (error) throw new Error(error.message || "Failed to fetch connections");
+  if (!connRows || connRows.length === 0) return [];
+
+  // Collect the "other" profile ids
+  const otherIds = new Set<string>();
+  for (const c of connRows) {
+    otherIds.add(c.from_profile_id === profileId ? c.to_profile_id : c.from_profile_id);
+  }
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, name, email, phone, avatar_url")
+    .in("id", Array.from(otherIds));
+  const profileMap = new Map((profiles || []).map((p) => [p.id, p]));
+
+  // Fetch last message per connection
+  const connectionIds = connRows.map((c) => c.id);
+  const { data: lastMessages } = await supabase
+    .from("messages")
+    .select("connection_id, message, sent_at")
+    .in("connection_id", connectionIds)
+    .order("sent_at", { ascending: false });
+
+  const lastMsgMap = new Map<string, { message: string; sent_at: string }>();
+  for (const m of lastMessages || []) {
+    if (!lastMsgMap.has(m.connection_id)) {
+      lastMsgMap.set(m.connection_id, { message: m.message, sent_at: m.sent_at });
+    }
+  }
+
+  // Fetch unread counts
+  const { data: unreadRows } = await supabase
+    .from("messages")
+    .select("connection_id")
+    .in("connection_id", connectionIds)
+    .neq("sender_profile_id", profileId)
+    .is("read_at", null);
+
+  const unreadMap = new Map<string, number>();
+  for (const u of unreadRows || []) {
+    unreadMap.set(u.connection_id, (unreadMap.get(u.connection_id) || 0) + 1);
+  }
+
+  // Deduplicate connection pairs – collect ALL connection IDs per pair so we
+  // can fetch messages from both the user-initiated and mirror rows.
+  const seen = new Map<string, { primary: typeof connRows[0]; allIds: string[] }>();
+  for (const c of connRows) {
+    const otherId = c.from_profile_id === profileId ? c.to_profile_id : c.from_profile_id;
+    const pairKey = `${otherId}_${c.property_id ?? "none"}`;
+    if (!seen.has(pairKey)) {
+      seen.set(pairKey, { primary: c, allIds: [c.id] });
+    } else {
+      const entry = seen.get(pairKey)!;
+      entry.allIds.push(c.id);
+      // Prefer the connection row initiated by the current user
+      if (c.from_profile_id === profileId && entry.primary.from_profile_id !== profileId) {
+        entry.primary = c;
+      }
+    }
+  }
+
+  const results: ChatConnectionRecord[] = [];
+  for (const { primary: c, allIds } of seen.values()) {
+    const isFromMe = c.from_profile_id === profileId;
+    const otherId = isFromMe ? c.to_profile_id : c.from_profile_id;
+    const profile = profileMap.get(otherId);
+    // Role: if I initiated the connection, the role field tells the other person's role.
+    // If the other person initiated it, their role field is about ME, so I flip it.
+    const role: "landlord" | "tenant" = isFromMe
+      ? c.role
+      : c.role === "landlord"
+        ? "tenant"
+        : "landlord";
+    // Merge last message across all sibling connection IDs
+    let bestLast: { message: string; sent_at: string } | null = null;
+    for (const cid of allIds) {
+      const candidate = lastMsgMap.get(cid);
+      if (candidate && (!bestLast || candidate.sent_at > bestLast.sent_at)) {
+        bestLast = candidate;
+      }
+    }
+    // Merge unread counts across all sibling connection IDs
+    let totalUnread = 0;
+    for (const cid of allIds) {
+      totalUnread += unreadMap.get(cid) || 0;
+    }
+    results.push({
+      id: c.id,
+      allConnectionIds: allIds,
+      otherProfileId: otherId,
+      name: profile?.name || "Unknown",
+      email: profile?.email || "",
+      phone: profile?.phone || null,
+      avatar: profile?.avatar_url || null,
+      role,
+      propertyId: c.property_id ? Number(c.property_id) : null,
+      propertyName: c.property_name || null,
+      status: c.status,
+      unreadMessages: totalUnread,
+      lastMessage: bestLast?.message || null,
+      lastMessageAt: bestLast?.sent_at || null,
+    });
+  }
+
+  // Sort: unread first, then most recent message
+  results.sort((a, b) => {
+    if (a.unreadMessages > 0 && b.unreadMessages === 0) return -1;
+    if (b.unreadMessages > 0 && a.unreadMessages === 0) return 1;
+    const aTime = a.lastMessageAt ? +new Date(a.lastMessageAt) : 0;
+    const bTime = b.lastMessageAt ? +new Date(b.lastMessageAt) : 0;
+    return bTime - aTime;
+  });
+
+  return results;
+}
+
+/**
+ * Fetch messages for a given connection, ordered oldest-first.
+ */
+export async function fetchMessages(connectionIds: string | string[]): Promise<ChatMessageRecord[]> {
+  const ids = Array.isArray(connectionIds) ? connectionIds : [connectionIds];
+  if (ids.length === 0) return [];
+
+  const supabase = getSupabaseBrowserClient();
+  const { data, error } = await supabase
+    .from("messages")
+    .select("*")
+    .in("connection_id", ids)
+    .order("sent_at", { ascending: true });
+
+  if (error) throw new Error(error.message || "Failed to fetch messages");
+
+  return (data || []).map((m) => ({
+    id: m.id,
+    connectionId: m.connection_id,
+    senderProfileId: m.sender_profile_id,
+    message: m.message,
+    sentAt: m.sent_at,
+    readAt: m.read_at || null,
+  }));
+}
+
+/**
+ * Send a message in a connection.
+ */
+export async function sendMessage(connectionId: string, text: string): Promise<ChatMessageRecord> {
+  if (!connectionId) throw new Error("Connection is required.");
+  if (!text.trim()) throw new Error("Message cannot be empty.");
+
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) throw new Error("You must be logged in to send messages.");
+
+  const { data, error } = await supabase
+    .from("messages")
+    .insert({
+      connection_id: connectionId,
+      sender_profile_id: profileId,
+      message: text.trim(),
+    })
+    .select("*")
+    .single();
+
+  if (error || !data) throw new Error(error?.message || "Failed to send message");
+
+  // Update the connection's updated_at so it bubbles to top
+  await supabase.from("connections").update({ updated_at: new Date().toISOString() }).eq("id", connectionId);
+
+  return {
+    id: data.id,
+    connectionId: data.connection_id,
+    senderProfileId: data.sender_profile_id,
+    message: data.message,
+    sentAt: data.sent_at,
+    readAt: data.read_at || null,
+  };
+}
+
+/**
+ * Mark all unread messages in a connection as read (messages from the other person).
+ */
+export async function markMessagesAsRead(connectionIds: string | string[]): Promise<void> {
+  const ids = Array.isArray(connectionIds) ? connectionIds : [connectionIds];
+  if (ids.length === 0) return;
+
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) return;
+
+  await supabase
+    .from("messages")
+    .update({ read_at: new Date().toISOString() })
+    .in("connection_id", ids)
+    .neq("sender_profile_id", profileId)
+    .is("read_at", null);
+}
+
+// ---------------------------------------------------------------------------
+// Property Documents
+// ---------------------------------------------------------------------------
+
+export type PropertyDocumentRecord = {
+  id: number;
+  property_id: number;
+  uploaded_by_profile_id: string | null;
+  name: string;
+  doc_type: string | null;
+  url: string;
+  mime_type: string | null;
+  description: string | null;
+  uploaded_at: string;
+  // joined fields
+  property_name?: string;
+  uploader_name?: string;
+};
+
+/**
+ * Fetch all documents for the current user's accessible properties.
+ */
+export async function fetchPropertyDocuments(): Promise<PropertyDocumentRecord[]> {
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) return [];
+
+  const accessibleIds = await fetchAccessiblePropertyIds(profileId);
+  if (accessibleIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from("property_documents")
+    .select("*, properties!inner(property_name), profiles(name)")
+    .in("property_id", accessibleIds)
+    .order("uploaded_at", { ascending: false });
+
+  if (error) throw new Error(error.message || "Failed to fetch documents");
+
+  return (data || []).map((d: any) => ({
+    id: d.id,
+    property_id: d.property_id,
+    uploaded_by_profile_id: d.uploaded_by_profile_id,
+    name: d.name,
+    doc_type: d.doc_type,
+    url: d.url,
+    mime_type: d.mime_type,
+    description: d.description,
+    uploaded_at: d.uploaded_at,
+    property_name: d.properties?.property_name || undefined,
+    uploader_name: d.profiles?.name || undefined,
+  }));
+}
+
+/**
+ * Upload a document file to storage and insert a row into property_documents.
+ */
+export async function uploadPropertyDocument(input: {
+  propertyId: number;
+  file: File;
+  docType?: string;
+  description?: string;
+}): Promise<PropertyDocumentRecord> {
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  if (!profileId) throw new Error("You must be logged in to upload documents.");
+
+  const bucket = getSupabaseStorageBucket();
+  const uploadFile = await prepareFileForUpload(input.file);
+  const safeName = uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+  const path = `documents/${input.propertyId}/${Date.now()}-${safeName}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from(bucket)
+    .upload(path, uploadFile, {
+      contentType: uploadFile.type || "application/octet-stream",
+      upsert: false,
+    });
+
+  if (uploadError) throw new Error(uploadError.message || "Storage upload failed");
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from(bucket).getPublicUrl(path);
+
+  const { data, error } = await supabase
+    .from("property_documents")
+    .insert({
+      property_id: input.propertyId,
+      uploaded_by_profile_id: profileId,
+      name: input.file.name,
+      doc_type: input.docType || null,
+      url: publicUrl,
+      mime_type: uploadFile.type || null,
+      description: input.description || null,
+    })
+    .select("*")
+    .single();
+
+  if (error || !data) throw new Error(error?.message || "Failed to save document");
+
+  return {
+    id: data.id,
+    property_id: data.property_id,
+    uploaded_by_profile_id: data.uploaded_by_profile_id,
+    name: data.name,
+    doc_type: data.doc_type,
+    url: data.url,
+    mime_type: data.mime_type,
+    description: data.description,
+    uploaded_at: data.uploaded_at,
+  };
+}
+
+/**
+ * Delete a property document (row + storage file).
+ */
+export async function deletePropertyDocument(docId: number, url: string): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const bucket = getSupabaseStorageBucket();
+
+  // Extract path from public URL
+  const bucketUrlPart = `/storage/v1/object/public/${bucket}/`;
+  const pathIdx = url.indexOf(bucketUrlPart);
+  if (pathIdx !== -1) {
+    const storagePath = decodeURIComponent(url.substring(pathIdx + bucketUrlPart.length));
+    await supabase.storage.from(bucket).remove([storagePath]);
+  }
+
+  const { error } = await supabase.from("property_documents").delete().eq("id", docId);
+  if (error) throw new Error(error.message || "Failed to delete document");
+}

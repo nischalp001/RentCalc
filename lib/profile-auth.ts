@@ -128,6 +128,7 @@ export async function ensureProfileForAuthUser(authUser: SupabaseAuthUser): Prom
   }
 
   const appUserId = await generateUniqueAppUserId(supabase);
+  const metaPhone = typeof authUser.user_metadata?.phone === "string" ? authUser.user_metadata.phone.trim() : null;
   const { data: inserted, error: insertError } = await supabase
     .from("profiles")
     .insert({
@@ -135,6 +136,7 @@ export async function ensureProfileForAuthUser(authUser: SupabaseAuthUser): Prom
       app_user_id: appUserId,
       name,
       email,
+      phone: metaPhone || null,
       avatar_url:
         typeof authUser.user_metadata?.avatar_url === "string"
           ? authUser.user_metadata.avatar_url

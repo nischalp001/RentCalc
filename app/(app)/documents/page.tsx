@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   FileText,
@@ -8,330 +8,514 @@ import {
   Upload,
   Eye,
   Calendar,
-  User,
   ImageIcon,
   X,
-  ChevronLeft,
-  ChevronRight,
-  FileSpreadsheet,
   Building2,
   FolderOpen,
   Users,
   MessageCircle,
   Receipt,
-  CheckCircle2,
+  Loader2,
+  Trash2,
+  Search,
+  FileUp,
 } from "lucide-react";
 import { useUser } from "@/lib/user-context";
 import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  fetchProperties,
+  fetchPropertyDocuments,
+  uploadPropertyDocument,
+  deletePropertyDocument,
+  type PropertyDocumentRecord,
+  type PropertyRecord,
+} from "@/lib/rental-data";
+import {
+  FilePreviewThumbnail,
+  FileLightbox,
+  type LightboxItem,
+} from "@/components/file-preview";
 
-// Mock data for user's own documents
-const myDocuments = [
-  {
-    id: 1,
-    name: "Lease Agreement - Unit 3B",
-    type: "Contract",
-    version: "v2.0",
-    uploadDate: "Dec 15, 2025",
-    property: "Sunset Apartments",
-    fileSize: "245 KB",
-    fileType: "pdf",
-  },
-  {
-    id: 2,
-    name: "Property Insurance Certificate",
-    type: "Insurance",
-    version: "v1.0",
-    uploadDate: "Jan 1, 2026",
-    property: "All Properties",
-    fileSize: "512 KB",
-    fileType: "pdf",
-  },
-  {
-    id: 3,
-    name: "Tax Documentation 2025",
-    type: "Tax",
-    version: "v1.0",
-    uploadDate: "Jan 10, 2026",
-    property: "All Properties",
-    fileSize: "1.2 MB",
-    fileType: "pdf",
-  },
-  {
-    id: 4,
-    name: "ID Verification",
-    type: "Identity",
-    version: "v1.0",
-    uploadDate: "Nov 1, 2025",
-    property: "Personal",
-    fileSize: "156 KB",
-    fileType: "pdf",
-  },
-];
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
-// Mock data for room condition images
-const roomConditions = {
-  before: [
-    {
-      id: 1,
-      name: "Living Room - Before",
-      date: "Nov 1, 2025",
-      uploadedBy: "You",
-      url: "/placeholder.svg?height=400&width=600",
-    },
-    {
-      id: 2,
-      name: "Kitchen - Before",
-      date: "Nov 1, 2025",
-      uploadedBy: "You",
-      url: "/placeholder.svg?height=400&width=600",
-    },
-    {
-      id: 3,
-      name: "Bedroom - Before",
-      date: "Nov 1, 2025",
-      uploadedBy: "You",
-      url: "/placeholder.svg?height=400&width=600",
-    },
-    {
-      id: 4,
-      name: "Bathroom - Before",
-      date: "Nov 1, 2025",
-      uploadedBy: "You",
-      url: "/placeholder.svg?height=400&width=600",
-    },
-  ],
-  after: [
-    {
-      id: 5,
-      name: "Living Room - After",
-      date: "Jan 15, 2026",
-      uploadedBy: "Tenant",
-      url: "/placeholder.svg?height=400&width=600",
-    },
-    {
-      id: 6,
-      name: "Kitchen - After",
-      date: "Jan 15, 2026",
-      uploadedBy: "Tenant",
-      url: "/placeholder.svg?height=400&width=600",
-    },
-  ],
-};
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
-// Mock data for reports
-const reports = [
-  {
-    id: 1,
-    name: "Ledger Report - 2025",
-    type: "PDF",
-    description: "Complete transaction history for 2025",
-    icon: FileText,
-  },
-  {
-    id: 2,
-    name: "Ledger Export - 2025",
-    type: "CSV",
-    description: "Spreadsheet format for accounting",
-    icon: FileSpreadsheet,
-  },
-  {
-    id: 3,
-    name: "Monthly Summary - Jan 2026",
-    type: "PDF",
-    description: "Summary of January 2026 transactions",
-    icon: FileText,
-  },
-];
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+const DOC_TYPE_OPTIONS = [
+  "Contract",
+  "Agreement",
+  "Insurance",
+  "Tax",
+  "Identity",
+  "Receipt",
+  "Invoice",
+  "Photo",
+  "Other",
+] as const;
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
 
 export default function DocumentsPage() {
-  const { connections } = useUser();
-  const [activeTab, setActiveTab] = useState("my-documents");
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
-  const [previewIndex, setPreviewIndex] = useState(0);
-  const allImages = [...roomConditions.before, ...roomConditions.after];
+  const { user, connections } = useUser();
+
+  // --- Data state ---
+  const [documents, setDocuments] = useState<PropertyDocumentRecord[]>([]);
+  const [properties, setProperties] = useState<PropertyRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // --- Upload dialog ---
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string>("");
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadDocType, setUploadDocType] = useState<string>("Other");
+  const [uploadDescription, setUploadDescription] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // --- Lightbox ---
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxItems, setLightboxItems] = useState<LightboxItem[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState(0);
+
+  // --- Search ---
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // --- Delete ---
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // --- Tabs ---
+  const [activeTab, setActiveTab] = useState("all");
+
+  // --- Load data ---
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [docs, props] = await Promise.all([
+        fetchPropertyDocuments(),
+        fetchProperties(),
+      ]);
+      setDocuments(docs);
+      setProperties(props);
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (user.profileId) void loadData();
+  }, [user.profileId, loadData]);
+
+  // Derived: group documents by property
+  const docsByProperty = new Map<number, PropertyDocumentRecord[]>();
+  for (const doc of documents) {
+    const list = docsByProperty.get(doc.property_id) || [];
+    list.push(doc);
+    docsByProperty.set(doc.property_id, list);
+  }
+
+  // Filtered documents
+  const filteredDocuments = documents.filter((doc) => {
+    const q = searchQuery.toLowerCase();
+    if (!q) return true;
+    return (
+      doc.name.toLowerCase().includes(q) ||
+      (doc.property_name || "").toLowerCase().includes(q) ||
+      (doc.doc_type || "").toLowerCase().includes(q) ||
+      (doc.description || "").toLowerCase().includes(q)
+    );
+  });
 
   // Associated profiles with their documents
   const associatedProfiles = connections
     .filter((c) => c.status === "active")
-    .map((connection) => ({
-      ...connection,
-      documents: [
-        {
-          id: `${connection.id}-1`,
-          name:
-            connection.role === "tenant"
-              ? "Lease Agreement"
-              : "Rental Agreement",
-          type: "Contract",
-          uploadDate: "Dec 1, 2025",
-          fileSize: "245 KB",
-        },
-        {
-          id: `${connection.id}-2`,
-          name: connection.role === "tenant" ? "ID Proof" : "Property Deed",
-          type: "Verification",
-          uploadDate: "Nov 15, 2025",
-          fileSize: "156 KB",
-        },
-      ],
-    }));
+    .map((connection) => {
+      const propId = connection.propertyId ? Number(connection.propertyId) : null;
+      const docs = propId ? docsByProperty.get(propId) || [] : [];
+      return { ...connection, documents: docs };
+    });
 
-  const handleImagePreview = (url: string) => {
-    const index = allImages.findIndex((img) => img.url === url);
-    setPreviewIndex(index);
-    setPreviewImage(url);
+  // ---------------------------------------------------------------------------
+  // Upload flow
+  // ---------------------------------------------------------------------------
+
+  const openUploadDialog = () => {
+    setSelectedPropertyId("");
+    setUploadFiles([]);
+    setUploadDocType("Other");
+    setUploadDescription("");
+    setUploadError(null);
+    setUploadDialogOpen(true);
   };
 
-  const handlePrevImage = () => {
-    const newIndex =
-      previewIndex === 0 ? allImages.length - 1 : previewIndex - 1;
-    setPreviewIndex(newIndex);
-    setPreviewImage(allImages[newIndex].url);
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    setUploadFiles((prev) => [...prev, ...files]);
+    // reset input so the same file can be re-selected
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleNextImage = () => {
-    const newIndex =
-      previewIndex === allImages.length - 1 ? 0 : previewIndex + 1;
-    setPreviewIndex(newIndex);
-    setPreviewImage(allImages[newIndex].url);
+  const removeUploadFile = (index: number) => {
+    setUploadFiles((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const handleUpload = async () => {
+    if (!selectedPropertyId) {
+      setUploadError("Please select a property.");
+      return;
+    }
+    if (uploadFiles.length === 0) {
+      setUploadError("Please select at least one file.");
+      return;
+    }
+
+    setUploading(true);
+    setUploadError(null);
+
+    try {
+      for (const file of uploadFiles) {
+        await uploadPropertyDocument({
+          propertyId: Number(selectedPropertyId),
+          file,
+          docType: uploadDocType,
+          description: uploadDescription || undefined,
+        });
+      }
+
+      setUploadDialogOpen(false);
+      await loadData();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Delete
+  // ---------------------------------------------------------------------------
+
+  const handleDelete = async () => {
+    if (deleteId == null) return;
+    const doc = documents.find((d) => d.id === deleteId);
+    if (!doc) return;
+    setDeleting(true);
+    try {
+      await deletePropertyDocument(doc.id, doc.url);
+      setDeleteId(null);
+      await loadData();
+    } catch {
+      // silent
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Lightbox
+  // ---------------------------------------------------------------------------
+
+  const openLightbox = (doc: PropertyDocumentRecord) => {
+    const items: LightboxItem[] = filteredDocuments
+      .filter(
+        (d) =>
+          d.mime_type?.startsWith("image/") || d.mime_type === "application/pdf"
+      )
+      .map((d) => ({
+        url: d.url,
+        name: d.name,
+        mime: d.mime_type,
+      }));
+    const idx = items.findIndex((i) => i.url === doc.url);
+    setLightboxItems(items);
+    setLightboxIndex(idx >= 0 ? idx : 0);
+    setLightboxOpen(true);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render: document row
+  // ---------------------------------------------------------------------------
+
+  const renderDocumentRow = (doc: PropertyDocumentRecord, showProperty = true) => {
+    const isImage = doc.mime_type?.startsWith("image/");
+    const isPdf = doc.mime_type === "application/pdf";
+    const canPreview = isImage || isPdf;
+    const isOwner = doc.uploaded_by_profile_id === user.profileId;
+
+    return (
+      <div
+        key={doc.id}
+        className="flex items-center gap-4 rounded-lg border border-border bg-background p-4 transition-colors hover:bg-muted/30"
+      >
+        {/* Thumbnail */}
+        <FilePreviewThumbnail
+          src={doc.url}
+          mime={doc.mime_type}
+          alt={doc.name}
+          className="h-12 w-12"
+          onClick={canPreview ? () => openLightbox(doc) : undefined}
+        />
+
+        {/* Info */}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <p className="truncate font-medium text-foreground">{doc.name}</p>
+            {doc.doc_type && (
+              <Badge variant="secondary" className="shrink-0 text-xs">
+                {doc.doc_type}
+              </Badge>
+            )}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <Calendar className="h-3 w-3" />
+              {formatDate(doc.uploaded_at)}
+            </span>
+            {showProperty && doc.property_name && (
+              <span className="flex items-center gap-1">
+                <Building2 className="h-3 w-3" />
+                {doc.property_name}
+              </span>
+            )}
+            {doc.uploader_name && (
+              <span>by {doc.uploader_name}</span>
+            )}
+          </div>
+          {doc.description && (
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{doc.description}</p>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex shrink-0 gap-1">
+          {canPreview && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-transparent"
+              onClick={() => openLightbox(doc)}
+            >
+              <Eye className="mr-1 h-4 w-4" />
+              <span className="hidden sm:inline">View</span>
+            </Button>
+          )}
+          <Button variant="outline" size="sm" className="bg-transparent" asChild>
+            <a href={doc.url} download={doc.name}>
+              <Download className="h-4 w-4" />
+            </a>
+          </Button>
+          {isOwner && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="bg-transparent text-destructive hover:text-destructive"
+              onClick={() => setDeleteId(doc.id)}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // ---------------------------------------------------------------------------
+  // Render
+  // ---------------------------------------------------------------------------
 
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-foreground lg:text-2xl">
-            Documents
-          </h1>
+          <h1 className="text-xl font-semibold text-foreground lg:text-2xl">Documents</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Manage your documents and view shared files
           </p>
         </div>
-        <Button>
+        <Button onClick={openUploadDialog}>
           <Upload className="mr-2 h-4 w-4" />
           Upload Document
         </Button>
       </div>
 
+      {/* Search */}
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          placeholder="Search documents..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:grid-cols-none">
-          <TabsTrigger value="my-documents">
+        <TabsList className="grid w-full grid-cols-3 lg:w-auto lg:grid-cols-none">
+          <TabsTrigger value="all">
             <FolderOpen className="mr-2 h-4 w-4 hidden sm:block" />
-            Your Docs
+            All Docs ({filteredDocuments.length})
+          </TabsTrigger>
+          <TabsTrigger value="by-property">
+            <Building2 className="mr-2 h-4 w-4 hidden sm:block" />
+            By Property
           </TabsTrigger>
           <TabsTrigger value="connections">
             <Users className="mr-2 h-4 w-4 hidden sm:block" />
             People
           </TabsTrigger>
-          <TabsTrigger value="room">Room</TabsTrigger>
-          <TabsTrigger value="reports">Reports</TabsTrigger>
         </TabsList>
 
-        {/* My Documents Tab */}
-        <TabsContent value="my-documents" className="mt-6">
-          <div className="mb-4 flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <FolderOpen className="h-4 w-4 text-primary" />
+        {/* ==================== All Documents Tab ==================== */}
+        <TabsContent value="all" className="mt-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-            <div>
-              <h3 className="font-semibold text-foreground">Your Documents</h3>
-              <p className="text-xs text-muted-foreground">
-                Personal documents and files you've uploaded
-              </p>
-            </div>
-          </div>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <CardTitle className="text-base font-semibold">
-                All Documents
-              </CardTitle>
-              <Button size="sm">
-                <Upload className="mr-2 h-4 w-4" />
-                Upload
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {myDocuments.length > 0 ? (
-                <div className="space-y-3">
-                  {myDocuments.map((doc) => (
-                    <div
-                      key={doc.id}
-                      className="flex items-center gap-4 rounded-lg border border-border bg-background p-4 transition-colors hover:bg-muted/30"
-                    >
-                      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                        <FileText className="h-6 w-6 text-primary" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="truncate font-medium text-foreground">
-                            {doc.name}
-                          </p>
-                          <Badge variant="secondary" className="shrink-0 text-xs">
-                            {doc.type}
-                          </Badge>
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Calendar className="h-3 w-3" />
-                            {doc.uploadDate}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Building2 className="h-3 w-3" />
-                            {doc.property}
-                          </span>
-                          <span>{doc.fileSize}</span>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 gap-2">
-                        <Button variant="outline" size="sm" className="bg-transparent">
-                          <Eye className="mr-2 h-4 w-4" />
-                          View
-                        </Button>
-                        <Button variant="outline" size="sm" className="bg-transparent">
-                          <Download className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
+          ) : filteredDocuments.length > 0 ? (
+            <div className="space-y-3">{filteredDocuments.map((doc) => renderDocumentRow(doc))}</div>
+          ) : (
+            <Card>
+              <CardContent className="p-6">
                 <EmptyState
                   icon={FileText}
                   title="No documents"
-                  description="Upload your first document to get started."
-                  action={{ label: "Upload Document", onClick: () => {} }}
+                  description={
+                    searchQuery
+                      ? "No documents match your search."
+                      : "Upload your first document to get started."
+                  }
+                  action={
+                    !searchQuery
+                      ? { label: "Upload Document", onClick: openUploadDialog }
+                      : undefined
+                  }
                 />
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
-        {/* Connections Tab - Associated Profiles */}
+        {/* ==================== By Property Tab ==================== */}
+        <TabsContent value="by-property" className="mt-6 space-y-6">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : properties.length > 0 ? (
+            properties.map((prop) => {
+              const propDocs = (docsByProperty.get(prop.id) || []).filter((d) => {
+                if (!searchQuery) return true;
+                const q = searchQuery.toLowerCase();
+                return d.name.toLowerCase().includes(q) || (d.doc_type || "").toLowerCase().includes(q);
+              });
+              return (
+                <Card key={prop.id}>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                        <Building2 className="h-5 w-5 text-primary" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base">{prop.property_name}</CardTitle>
+                        <p className="text-xs text-muted-foreground">
+                          {prop.location} &middot; {propDocs.length} document{propDocs.length !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="bg-transparent"
+                      onClick={() => {
+                        setSelectedPropertyId(String(prop.id));
+                        openUploadDialog();
+                        setSelectedPropertyId(String(prop.id));
+                      }}
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      Upload
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    {propDocs.length > 0 ? (
+                      <div className="space-y-3">
+                        {propDocs.map((doc) => renderDocumentRow(doc, false))}
+                      </div>
+                    ) : (
+                      <p className="py-4 text-center text-sm text-muted-foreground">
+                        No documents for this property yet.
+                      </p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })
+          ) : (
+            <Card>
+              <CardContent className="p-6">
+                <EmptyState
+                  icon={Building2}
+                  title="No properties"
+                  description="Add a property first, then you can upload documents."
+                />
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        {/* ==================== People Tab ==================== */}
         <TabsContent value="connections" className="mt-6">
           <div className="mb-4 flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-success/10">
-              <Users className="h-4 w-4 text-success" />
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-500/10">
+              <Users className="h-4 w-4 text-emerald-600" />
             </div>
             <div>
-              <h3 className="font-semibold text-foreground">
-                Associated Profiles
-              </h3>
+              <h3 className="font-semibold text-foreground">Associated Profiles</h3>
               <p className="text-xs text-muted-foreground">
-                View documents shared by your connections
+                View documents shared with your connections
               </p>
             </div>
           </div>
@@ -348,28 +532,32 @@ export default function DocumentsPage() {
                             "flex h-12 w-12 items-center justify-center rounded-full text-sm font-semibold",
                             profile.role === "landlord"
                               ? "bg-primary/10 text-primary"
-                              : "bg-success/10 text-success"
+                              : "bg-emerald-500/10 text-emerald-600"
                           )}
                         >
-                          {profile.name.charAt(0)}
+                          {profile.avatar ? (
+                            <img
+                              src={profile.avatar}
+                              alt={profile.name}
+                              className="h-12 w-12 rounded-full object-cover"
+                            />
+                          ) : (
+                            profile.name.charAt(0).toUpperCase()
+                          )}
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <p className="font-semibold text-foreground">
-                              {profile.name}
-                            </p>
+                            <p className="font-semibold text-foreground">{profile.name}</p>
                             <Badge
                               variant="secondary"
                               className={cn(
                                 "text-xs",
                                 profile.role === "landlord"
                                   ? "bg-primary/10 text-primary"
-                                  : "bg-success/10 text-success"
+                                  : "bg-emerald-500/10 text-emerald-600"
                               )}
                             >
-                              {profile.role === "landlord"
-                                ? "Your Landlord"
-                                : "Your Tenant"}
+                              {profile.role === "landlord" ? "Your Landlord" : "Your Tenant"}
                             </Badge>
                           </div>
                           {profile.propertyName && (
@@ -381,26 +569,10 @@ export default function DocumentsPage() {
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="bg-transparent"
-                          asChild
-                        >
+                        <Button variant="outline" size="sm" className="bg-transparent" asChild>
                           <Link href="/messages">
                             <MessageCircle className="mr-2 h-4 w-4" />
                             Message
-                          </Link>
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="bg-transparent"
-                          asChild
-                        >
-                          <Link href="/transactions">
-                            <Receipt className="mr-2 h-4 w-4" />
-                            Transactions
                           </Link>
                         </Button>
                       </div>
@@ -408,42 +580,15 @@ export default function DocumentsPage() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <p className="text-xs font-semibold uppercase text-muted-foreground">
-                      Shared Documents
+                      Shared Documents ({profile.documents.length})
                     </p>
-                    {profile.documents.map((doc) => (
-                      <div
-                        key={doc.id}
-                        className="flex items-center gap-3 rounded-lg border border-border bg-muted/30 p-3"
-                      >
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background">
-                          <FileText className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-foreground">
-                            {doc.name}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {doc.type} - {doc.uploadDate}
-                          </p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <Download className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full bg-transparent"
-                    >
-                      <Upload className="mr-2 h-4 w-4" />
-                      Upload Document for {profile.name}
-                    </Button>
+                    {profile.documents.length > 0 ? (
+                      profile.documents.map((doc) => renderDocumentRow(doc, false))
+                    ) : (
+                      <p className="py-3 text-center text-sm text-muted-foreground">
+                        No shared documents yet.
+                      </p>
+                    )}
                   </CardContent>
                 </Card>
               ))}
@@ -454,203 +599,203 @@ export default function DocumentsPage() {
                 <EmptyState
                   icon={Users}
                   title="No connections"
-                  description="Add landlords or tenants to share documents with them."
-                  action={{ label: "Add Person", onClick: () => {} }}
+                  description="Connect with landlords or tenants to share documents."
                 />
               </CardContent>
             </Card>
           )}
         </TabsContent>
-
-        {/* Room Condition Tab */}
-        <TabsContent value="room" className="mt-6 space-y-6">
-          {/* Before Images */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <CardTitle className="text-base font-semibold">
-                Before Move-in
-              </CardTitle>
-              <Button size="sm" variant="outline" className="bg-transparent">
-                <Upload className="mr-2 h-4 w-4" />
-                Add Photos
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {roomConditions.before.length > 0 ? (
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {roomConditions.before.map((image) => (
-                    <button
-                      key={image.id}
-                      className="group relative aspect-[4/3] overflow-hidden rounded-lg border border-border bg-muted"
-                      onClick={() => handleImagePreview(image.url)}
-                    >
-                      <img
-                        src={image.url || "/placeholder.svg"}
-                        alt={image.name}
-                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center bg-foreground/0 transition-colors group-hover:bg-foreground/20">
-                        <Eye className="h-6 w-6 text-background opacity-0 transition-opacity group-hover:opacity-100" />
-                      </div>
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-foreground/60 to-transparent p-2">
-                        <p className="truncate text-xs font-medium text-background">
-                          {image.name}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState
-                  icon={ImageIcon}
-                  title="No before photos"
-                  description="Document the property condition before move-in."
-                />
-              )}
-            </CardContent>
-          </Card>
-
-          {/* After Images */}
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <CardTitle className="text-base font-semibold">
-                After Move-out
-              </CardTitle>
-              <Button size="sm" variant="outline" className="bg-transparent">
-                <Upload className="mr-2 h-4 w-4" />
-                Add Photos
-              </Button>
-            </CardHeader>
-            <CardContent>
-              {roomConditions.after.length > 0 ? (
-                <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-                  {roomConditions.after.map((image) => (
-                    <button
-                      key={image.id}
-                      className="group relative aspect-[4/3] overflow-hidden rounded-lg border border-border bg-muted"
-                      onClick={() => handleImagePreview(image.url)}
-                    >
-                      <img
-                        src={image.url || "/placeholder.svg"}
-                        alt={image.name}
-                        className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                      />
-                      <div className="absolute inset-0 flex items-center justify-center bg-foreground/0 transition-colors group-hover:bg-foreground/20">
-                        <Eye className="h-6 w-6 text-background opacity-0 transition-opacity group-hover:opacity-100" />
-                      </div>
-                      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-foreground/60 to-transparent p-2">
-                        <p className="truncate text-xs font-medium text-background">
-                          {image.name}
-                        </p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <EmptyState
-                  icon={ImageIcon}
-                  title="No after photos"
-                  description="Photos will be uploaded when the tenant moves out."
-                />
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Reports Tab */}
-        <TabsContent value="reports" className="mt-6">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">
-                Available Reports
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {reports.map((report) => (
-                  <div
-                    key={report.id}
-                    className="flex flex-col rounded-lg border border-border bg-background p-4"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                        <report.icon className="h-5 w-5 text-primary" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-foreground">
-                          {report.name}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {report.type}
-                        </p>
-                      </div>
-                    </div>
-                    <p className="mt-3 text-sm text-muted-foreground">
-                      {report.description}
-                    </p>
-                    <Button
-                      className="mt-4 bg-transparent"
-                      variant="outline"
-                      size="sm"
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Download
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
       </Tabs>
 
-      {/* Image Preview Modal */}
-      <Dialog
-        open={!!previewImage}
-        onOpenChange={() => setPreviewImage(null)}
-      >
-        <DialogContent className="max-w-3xl p-0">
-          <DialogHeader className="sr-only">
-            <DialogTitle>Image Preview</DialogTitle>
+      {/* ==================== Upload Document Dialog ==================== */}
+      <Dialog open={uploadDialogOpen} onOpenChange={setUploadDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Upload Document</DialogTitle>
+            <DialogDescription>
+              Select a property and upload files.
+            </DialogDescription>
           </DialogHeader>
-          <div className="relative">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-2 top-2 z-10 bg-background/80 backdrop-blur-sm"
-              onClick={() => setPreviewImage(null)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-            <img
-              src={previewImage || ""}
-              alt="Preview"
-              className="h-auto max-h-[80vh] w-full object-contain"
-            />
-            <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between bg-gradient-to-t from-foreground/80 to-transparent p-4">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-background hover:bg-background/20"
-                onClick={handlePrevImage}
-              >
-                <ChevronLeft className="h-6 w-6" />
-              </Button>
-              <p className="text-sm font-medium text-background">
-                {allImages[previewIndex]?.name}
-              </p>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-background hover:bg-background/20"
-                onClick={handleNextImage}
-              >
-                <ChevronRight className="h-6 w-6" />
-              </Button>
+
+          <div className="space-y-4 py-2">
+            {/* Property picker */}
+            <div className="space-y-2">
+              <Label>Property</Label>
+              <Select value={selectedPropertyId} onValueChange={setSelectedPropertyId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a property..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {properties.map((prop) => {
+                    const isOwner = prop.owner_profile_id === user.profileId;
+                    return (
+                      <SelectItem key={prop.id} value={String(prop.id)}>
+                        <div className="flex items-center gap-2">
+                          <Building2 className="h-4 w-4 text-muted-foreground" />
+                          <span>{prop.property_name}</span>
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                            {isOwner ? "Owned" : "Rented"}
+                          </Badge>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </div>
+
+            {/* Show rest of form only when property selected */}
+            {selectedPropertyId && (
+              <>
+                {/* Document type */}
+                <div className="space-y-2">
+                  <Label>Document Type</Label>
+                  <Select value={uploadDocType} onValueChange={setUploadDocType}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DOC_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt} value={opt}>
+                          {opt}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Description */}
+                <div className="space-y-2">
+                  <Label>Description (optional)</Label>
+                  <Input
+                    value={uploadDescription}
+                    onChange={(e) => setUploadDescription(e.target.value)}
+                    placeholder="Brief description of the document"
+                  />
+                </div>
+
+                {/* File drop / select zone */}
+                <div className="space-y-2">
+                  <Label>Files</Label>
+                  <div
+                    className="relative flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-border p-6 text-center transition-colors hover:border-primary/50 hover:bg-muted/30"
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const files = Array.from(e.dataTransfer.files);
+                      setUploadFiles((prev) => [...prev, ...files]);
+                    }}
+                  >
+                    <FileUp className="h-8 w-8 text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Click to browse or drag files here
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Images, PDFs, documents
+                    </p>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                      className="hidden"
+                      onChange={handleFileSelect}
+                    />
+                  </div>
+                </div>
+
+                {/* File previews */}
+                {uploadFiles.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      {uploadFiles.length} file{uploadFiles.length !== 1 ? "s" : ""} selected
+                    </p>
+                    <div className="flex flex-wrap gap-3">
+                      {uploadFiles.map((file, idx) => (
+                        <div key={`${file.name}-${idx}`} className="flex flex-col items-center gap-1">
+                          <FilePreviewThumbnail
+                            src={file}
+                            alt={file.name}
+                            className="h-20 w-20"
+                            onRemove={() => removeUploadFile(idx)}
+                          />
+                          <p className="max-w-[80px] truncate text-[10px] text-muted-foreground">
+                            {file.name}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {formatFileSize(file.size)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {uploadError && <p className="text-sm text-destructive">{uploadError}</p>}
           </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUploadDialogOpen(false)} disabled={uploading}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleUpload()}
+              disabled={uploading || !selectedPropertyId || uploadFiles.length === 0}
+            >
+              {uploading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="mr-2 h-4 w-4" />
+                  Upload ({uploadFiles.length})
+                </>
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ==================== Delete Confirm Dialog ==================== */}
+      <Dialog open={deleteId != null} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete Document</DialogTitle>
+            <DialogDescription>
+              This will permanently delete the document. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteId(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDelete()}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ==================== File Lightbox ==================== */}
+      <FileLightbox
+        open={lightboxOpen}
+        onOpenChange={setLightboxOpen}
+        items={lightboxItems}
+        startIndex={lightboxIndex}
+      />
     </div>
   );
 }

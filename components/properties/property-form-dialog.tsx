@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { createProperty, type CreatePropertyInput } from "@/lib/rental-data";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
 import { useUser } from "@/lib/user-context";
+import { FilePreviewThumbnail } from "@/components/file-preview";
 
 type PropertyFormDialogProps = {
   open: boolean;
@@ -480,6 +481,13 @@ function PropertyCreateForm({ onSuccess, showCancel, closeOnSuccess, onCancel }:
                     accept="image/*"
                     onChange={(event) => setImageFile(image.id, event.target.files?.[0] || null)}
                   />
+                  {image.file && (
+                    <FilePreviewThumbnail
+                      src={image.file}
+                      alt={image.label || `Image ${index + 1}`}
+                      className="h-24 w-24 mt-2"
+                    />
+                  )}
                 </div>
 
                 <div className="space-y-2">

@@ -1,13 +1,15 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { ensureProfileForAuthUser } from "@/lib/profile-auth";
 import { getSupabaseBrowserClient } from "@/lib/supabase-client";
+import { fetchChatConnections, type ChatConnectionRecord } from "@/lib/rental-data";
 
 export type ConnectionRole = "landlord" | "tenant";
 
 export interface Connection {
   id: string;
+  allConnectionIds: string[];
   name: string;
   email: string;
   phone?: string;
@@ -17,6 +19,8 @@ export interface Connection {
   propertyName?: string;
   status: "pending" | "active";
   unreadMessages: number;
+  lastMessage?: string;
+  lastMessageAt?: string;
 }
 
 interface User {
@@ -34,6 +38,8 @@ interface UserContextType {
   setUser: (user: User) => void;
   profileReady: boolean;
   connections: Connection[];
+  connectionsLoading: boolean;
+  refreshConnections: () => Promise<void>;
   addConnection: (connection: Connection) => void;
   removeConnection: (id: string) => void;
   updateConnectionStatus: (id: string, status: "pending" | "active") => void;
@@ -47,15 +53,43 @@ const defaultUser: User = {
   avatar: undefined,
 };
 
-const defaultConnections: Connection[] = [];
-
 const UserContext = createContext<UserContextType | undefined>(undefined);
+
+function toConnection(record: ChatConnectionRecord): Connection {
+  return {
+    id: record.id,
+    allConnectionIds: record.allConnectionIds,
+    name: record.name,
+    email: record.email,
+    phone: record.phone || undefined,
+    avatar: record.avatar || undefined,
+    role: record.role,
+    propertyId: record.propertyId != null ? String(record.propertyId) : undefined,
+    propertyName: record.propertyName || undefined,
+    status: record.status,
+    unreadMessages: record.unreadMessages,
+    lastMessage: record.lastMessage || undefined,
+    lastMessageAt: record.lastMessageAt || undefined,
+  };
+}
 
 export function UserProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(defaultUser);
   const [profileReady, setProfileReady] = useState(false);
-  const [connections, setConnections] =
-    useState<Connection[]>(defaultConnections);
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
+
+  const loadConnections = useCallback(async () => {
+    setConnectionsLoading(true);
+    try {
+      const records = await fetchChatConnections();
+      setConnections(records.map(toConnection));
+    } catch {
+      // Keep existing connections on error
+    } finally {
+      setConnectionsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -101,6 +135,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
 
       if (!session?.user) {
         setUser(defaultUser);
+        setConnections([]);
         setProfileReady(true);
         return;
       }
@@ -132,6 +167,13 @@ export function UserProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Load connections once profile is ready (and has a profileId)
+  useEffect(() => {
+    if (profileReady && user.profileId) {
+      void loadConnections();
+    }
+  }, [profileReady, user.profileId, loadConnections]);
+
   const addConnection = (connection: Connection) => {
     setConnections((prev) => [...prev, connection]);
   };
@@ -153,6 +195,8 @@ export function UserProvider({ children }: { children: ReactNode }) {
         setUser,
         profileReady,
         connections,
+        connectionsLoading,
+        refreshConnections: loadConnections,
         addConnection,
         removeConnection,
         updateConnectionStatus,

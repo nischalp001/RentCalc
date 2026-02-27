@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Building2, Loader2 } from "lucide-react";
+import { Building2, Loader2, Phone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<AuthMode>("signin");
   const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -73,6 +74,7 @@ export default function LoginPage() {
           options: {
             data: {
               name: name.trim(),
+              phone: phone.trim() || null,
             },
           },
         });
@@ -168,10 +170,23 @@ export default function LoginPage() {
 
           <form className="space-y-3" onSubmit={handleSubmit}>
             {mode === "signup" && (
-              <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
-                <Input id="name" value={name} onChange={(event) => setName(event.target.value)} />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input id="name" value={name} onChange={(event) => setName(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Phone Number</Label>
+                  <Input
+                    id="phone"
+                    type="tel"
+                    autoComplete="tel"
+                    placeholder="e.g. 9841234567"
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value)}
+                  />
+                </div>
+              </>
             )}
 
             <div className="space-y-2">
