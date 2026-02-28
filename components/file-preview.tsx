@@ -172,17 +172,8 @@ export function FileLightbox({
     if (open) setIndex(startIndex);
   }, [open, startIndex]);
 
-  const current = items[index];
-  if (!current) return null;
-
-  const resolvedMime = current.mime || mimeFromUrl(current.url);
-  const isImage = isImageMime(resolvedMime);
-  const isPdf = isPdfMime(resolvedMime);
-  const canPrev = items.length > 1;
-  const canNext = items.length > 1;
-
-  const goPrev = () => setIndex((i) => (i === 0 ? items.length - 1 : i - 1));
-  const goNext = () => setIndex((i) => (i === items.length - 1 ? 0 : i + 1));
+  const goPrev = useCallback(() => setIndex((i) => (i === 0 ? items.length - 1 : i - 1)), [items.length]);
+  const goNext = useCallback(() => setIndex((i) => (i === items.length - 1 ? 0 : i + 1)), [items.length]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -193,8 +184,16 @@ export function FileLightbox({
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, items.length]);
+  }, [open, goPrev, goNext]);
+
+  const current = items[index];
+  if (!current) return null;
+
+  const resolvedMime = current.mime || mimeFromUrl(current.url);
+  const isImage = isImageMime(resolvedMime);
+  const isPdf = isPdfMime(resolvedMime);
+  const canPrev = items.length > 1;
+  const canNext = items.length > 1;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

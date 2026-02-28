@@ -205,6 +205,10 @@ export default function DocumentsPage() {
       setUploadError("Please select a property.");
       return;
     }
+    if (!uploadDescription.trim()) {
+      setUploadError("Please enter a description.");
+      return;
+    }
     if (uploadFiles.length === 0) {
       setUploadError("Please select at least one file.");
       return;
@@ -300,7 +304,7 @@ export default function DocumentsPage() {
         {/* Info */}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <p className="truncate font-medium text-foreground">{doc.name}</p>
+            <p className="truncate font-medium text-foreground">{doc.description || doc.name}</p>
             {doc.doc_type && (
               <Badge variant="secondary" className="shrink-0 text-xs">
                 {doc.doc_type}
@@ -323,7 +327,7 @@ export default function DocumentsPage() {
             )}
           </div>
           {doc.description && (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">{doc.description}</p>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground">{doc.name}</p>
           )}
         </div>
 
@@ -666,11 +670,12 @@ export default function DocumentsPage() {
 
                 {/* Description */}
                 <div className="space-y-2">
-                  <Label>Description (optional)</Label>
+                  <Label>Description <span className="text-destructive">*</span></Label>
                   <Input
                     value={uploadDescription}
                     onChange={(e) => setUploadDescription(e.target.value)}
                     placeholder="Brief description of the document"
+                    required
                   />
                 </div>
 
