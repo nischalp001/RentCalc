@@ -35,7 +35,7 @@ import {
 
 const formatNpr = (value: number) => `NPR ${value.toFixed(2)}`;
 const maxShortcutCards = 2;
-const maxRecentBills = 4;
+const maxBillsPerProperty = 3;
 export default function DashboardPage() {
   const { user } = useUser();
   const [properties, setProperties] = useState<PropertyRecord[]>([]);
@@ -110,15 +110,45 @@ export default function DashboardPage() {
     [bills, rentalPropertyIds]
   );
 
-  const recentOwnedBills = useMemo(
-    () => [...ownedBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, maxRecentBills),
-    [ownedBills]
-  );
+  const recentOwnedBills = useMemo(() => {
+    // Group bills by property and limit to maxBillsPerProperty per property
+    const billsByProperty = new Map<number, BillRecord[]>();
+    ownedBills.forEach((bill) => {
+      if (!billsByProperty.has(bill.property_id)) {
+        billsByProperty.set(bill.property_id, []);
+      }
+      billsByProperty.get(bill.property_id)!.push(bill);
+    });
+    
+    // Sort and limit each property's bills
+    const limitedBills: BillRecord[] = [];
+    billsByProperty.forEach((propertyBills) => {
+      const sorted = [...propertyBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+      limitedBills.push(...sorted.slice(0, maxBillsPerProperty));
+    });
+    
+    return limitedBills.sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+  }, [ownedBills]);
 
-  const recentRentalBills = useMemo(
-    () => [...rentalBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, maxRecentBills),
-    [rentalBills]
-  );
+  const recentRentalBills = useMemo(() => {
+    // Group bills by property and limit to maxBillsPerProperty per property
+    const billsByProperty = new Map<number, BillRecord[]>();
+    rentalBills.forEach((bill) => {
+      if (!billsByProperty.has(bill.property_id)) {
+        billsByProperty.set(bill.property_id, []);
+      }
+      billsByProperty.get(bill.property_id)!.push(bill);
+    });
+    
+    // Sort and limit each property's bills
+    const limitedBills: BillRecord[] = [];
+    billsByProperty.forEach((propertyBills) => {
+      const sorted = [...propertyBills].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+      limitedBills.push(...sorted.slice(0, maxBillsPerProperty));
+    });
+    
+    return limitedBills.sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+  }, [rentalBills]);
 
   const ownerTotals = useMemo(() => {
     const receivable = ownedBills.reduce((sum, bill) => {
@@ -484,7 +514,14 @@ export default function DashboardPage() {
           )}
 
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold">Recent Activity</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Recent Activity</h2>
+              {(sortedOwnedProperties.length > 2 || sortedRentalProperties.length > 2) && (
+                <Button asChild variant="outline">
+                  <Link href="/transactions/history">View Bill History</Link>
+                </Button>
+              )}
+            </div>
             <div className="grid gap-4 xl:grid-cols-2">
               <Card>
                 <CardHeader>

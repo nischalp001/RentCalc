@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ChevronDown, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, History, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -751,10 +751,18 @@ export default function TransactionsPage() {
           <h1 className="text-xl font-semibold lg:text-2xl">Rent & Transactions</h1>
           <p className="text-sm text-muted-foreground">Live rent data from Supabase</p>
         </div>
-        <Button onClick={() => void handleOpenCreateBill()} disabled={checkingTenantEligibility}>
-          <Plus className="mr-2 h-4 w-4" />
-          {checkingTenantEligibility ? "Checking..." : "Create Bill"}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/transactions/history">
+              <History className="mr-2 h-4 w-4" />
+              Transaction History
+            </Link>
+          </Button>
+          <Button onClick={() => void handleOpenCreateBill()} disabled={checkingTenantEligibility}>
+            <Plus className="mr-2 h-4 w-4" />
+            {checkingTenantEligibility ? "Checking..." : "Create Bill"}
+          </Button>
+        </div>
       </div>
 
       {error && (

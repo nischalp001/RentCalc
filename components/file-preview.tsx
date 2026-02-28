@@ -197,14 +197,14 @@ export function FileLightbox({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl p-0 gap-0 overflow-hidden">
+      <DialogContent className="max-w-[95vw] sm:max-w-3xl md:max-w-4xl lg:max-w-5xl p-0 gap-0 overflow-hidden">
         <DialogHeader className="sr-only">
           <DialogTitle>{current.name || "Preview"}</DialogTitle>
         </DialogHeader>
 
         {/* Top bar */}
-        <div className="flex items-center justify-between border-b border-border px-4 py-2">
-          <p className="truncate text-sm font-medium text-foreground">
+        <div className="flex items-center justify-between border-b border-border px-2 sm:px-4 py-2">
+          <p className="truncate text-xs sm:text-sm font-medium text-foreground">
             {current.name || "File"}{" "}
             {items.length > 1 && (
               <span className="text-muted-foreground">
@@ -212,49 +212,49 @@ export function FileLightbox({
               </span>
             )}
           </p>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+          <div className="flex items-center gap-0.5 sm:gap-1">
+            <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" asChild>
               <a href={current.url} target="_blank" rel="noopener noreferrer">
-                <ExternalLink className="h-4 w-4" />
+                <ExternalLink className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </a>
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
+            <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-8 sm:w-8" asChild>
               <a href={current.url} download={current.name || true}>
-                <Download className="h-4 w-4" />
+                <Download className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
               </a>
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8"
+              className="h-7 w-7 sm:h-8 sm:w-8"
               onClick={() => onOpenChange(false)}
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             </Button>
           </div>
         </div>
 
         {/* Content */}
-        <div className="relative flex min-h-[60vh] max-h-[80vh] items-center justify-center bg-muted/30">
+        <div className="relative flex min-h-[50vh] max-h-[70vh] sm:min-h-[60vh] sm:max-h-[75vh] md:max-h-[80vh] items-center justify-center bg-muted/30">
           {isImage ? (
             <img
               src={current.url}
               alt={current.name || "Preview"}
-              className="max-h-[78vh] max-w-full object-contain"
+              className="max-h-[48vh] sm:max-h-[73vh] md:max-h-[78vh] max-w-full w-auto h-auto object-contain p-2 sm:p-4"
             />
           ) : isPdf ? (
             <iframe
               src={current.url}
               title={current.name || "PDF Preview"}
-              className="h-[78vh] w-full"
+              className="h-[48vh] sm:h-[73vh] md:h-[78vh] w-full"
             />
           ) : (
-            <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
-              <FileText className="h-16 w-16" />
-              <p className="text-sm">Preview not available for this file type</p>
-              <Button variant="outline" asChild>
+            <div className="flex flex-col items-center gap-3 py-8 sm:py-16 px-4 text-muted-foreground">
+              <FileText className="h-12 w-12 sm:h-16 sm:w-16" />
+              <p className="text-xs sm:text-sm text-center">Preview not available for this file type</p>
+              <Button variant="outline" size="sm" asChild>
                 <a href={current.url} download={current.name || true}>
-                  <Download className="mr-2 h-4 w-4" />
+                  <Download className="mr-2 h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   Download File
                 </a>
               </Button>
@@ -266,20 +266,20 @@ export function FileLightbox({
             <Button
               variant="ghost"
               size="icon"
-              className="absolute left-2 top-1/2 -translate-y-1/2 bg-background/60 backdrop-blur-sm hover:bg-background/80"
+              className="absolute left-1 sm:left-2 top-1/2 -translate-y-1/2 h-8 w-8 sm:h-10 sm:w-10 bg-background/60 backdrop-blur-sm hover:bg-background/80"
               onClick={goPrev}
             >
-              <ChevronLeft className="h-5 w-5" />
+              <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
             </Button>
           )}
           {canNext && (
             <Button
               variant="ghost"
               size="icon"
-              className="absolute right-2 top-1/2 -translate-y-1/2 bg-background/60 backdrop-blur-sm hover:bg-background/80"
+              className="absolute right-1 sm:right-2 top-1/2 -translate-y-1/2 h-8 w-8 sm:h-10 sm:w-10 bg-background/60 backdrop-blur-sm hover:bg-background/80"
               onClick={goNext}
             >
-              <ChevronRight className="h-5 w-5" />
+              <ChevronRight className="h-4 w-4 sm:h-5 sm:w-5" />
             </Button>
           )}
         </div>

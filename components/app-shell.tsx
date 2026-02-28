@@ -32,8 +32,11 @@ import {
   fetchOwnerPendingApprovalRequests,
   fetchProperties,
   fetchTenantPendingConnectionRequests,
+  fetchUnreadNotifications,
+  markNotificationAsRead,
   rejectOwnerPendingRequest,
   respondToTenantInviteRequest,
+  type NotificationRecord,
   type OwnerApprovalRequest,
   type TenantInviteRequest,
 } from "@/lib/rental-data";
@@ -65,6 +68,7 @@ export function AppShell({ children }: AppShellProps) {
   const [notificationError, setNotificationError] = useState<string | null>(null);
   const [tenantInviteRequests, setTenantInviteRequests] = useState<TenantInviteRequest[]>([]);
   const [ownerApprovalRequests, setOwnerApprovalRequests] = useState<OwnerApprovalRequest[]>([]);
+  const [billNotifications, setBillNotifications] = useState<NotificationRecord[]>([]);
   const [requestActionSubmitting, setRequestActionSubmitting] = useState<string | null>(null);
   const [tenantConfirmDialogOpen, setTenantConfirmDialogOpen] = useState(false);
   const [selectedTenantInvite, setSelectedTenantInvite] = useState<TenantInviteRequest | null>(null);
@@ -84,6 +88,7 @@ export function AppShell({ children }: AppShellProps) {
       setNotificationCount(0);
       setTenantInviteRequests([]);
       setOwnerApprovalRequests([]);
+      setBillNotifications([]);
       return;
     }
     setNotificationLoading(true);
@@ -95,9 +100,12 @@ export function AppShell({ children }: AppShellProps) {
         ownedProperties.map((property) => fetchOwnerPendingApprovalRequests(property.id))
       );
       const flattenedOwnerRequests = ownerRequests.flat();
+      const billNotifs = await fetchUnreadNotifications();
+      
       setTenantInviteRequests(tenantRequests);
       setOwnerApprovalRequests(flattenedOwnerRequests);
-      setNotificationCount(tenantRequests.length + flattenedOwnerRequests.length);
+      setBillNotifications(billNotifs);
+      setNotificationCount(tenantRequests.length + flattenedOwnerRequests.length + billNotifs.length);
       setNotificationError(null);
     } catch (caughtError) {
       setNotificationError(caughtError instanceof Error ? caughtError.message : "Failed to load notifications");
@@ -501,6 +509,30 @@ export function AppShell({ children }: AppShellProps) {
                     Tap to approve with monthly rent and joined date.
                   </p>
                 </button>
+              ))}
+              {billNotifications.map((notification) => (
+                <Link
+                  key={`bill-notif-${notification.id}`}
+                  href={`/transactions/${notification.related_bill_id}`}
+                  className="block w-full rounded-md border p-3 text-left transition-colors hover:bg-muted/40"
+                  onClick={async () => {
+                    try {
+                      await markNotificationAsRead(notification.id);
+                      await loadNotificationData();
+                      setNotificationOpen(false);
+                    } catch (error) {
+                      console.error("Failed to mark notification as read:", error);
+                    }
+                  }}
+                >
+                  <p className="text-sm font-medium">{notification.title}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {notification.message}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {new Date(notification.created_at).toLocaleString()}
+                  </p>
+                </Link>
               ))}
             </div>
           </div>

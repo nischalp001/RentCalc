@@ -252,6 +252,18 @@ export type VerifyBillPaymentClaimInput = {
   approve?: boolean;
 };
 
+export type NotificationRecord = {
+  id: number;
+  profile_id: string;
+  type: "bill_created" | "payment_verified_by_owner" | "payment_verified_by_tenant";
+  title: string;
+  message: string;
+  related_bill_id: number | null;
+  related_property_id: number | null;
+  read: boolean;
+  created_at: string;
+};
+
 export type ConnectTenantToPropertyByCodeInput = {
   propertyCode: string;
   tenantName: string;
@@ -1231,7 +1243,57 @@ export async function verifyBillPaymentClaim(input: VerifyBillPaymentClaimInput)
     throw new Error(error?.message || "Failed to verify payment claim");
   }
 
-  return data as BillRecord;
+  const verifiedBill = data as BillRecord;
+
+  // Create notification based on who verified
+  try {
+    const { data: property } = await supabase
+      .from("properties")
+      .select("owner_profile_id, property_name")
+      .eq("id", verifiedBill.property_id)
+      .single();
+
+    if (property) {
+      if (input.verifier === "owner" && approve) {
+        // Owner verified payment - notify tenant(s)
+        const { data: tenants } = await supabase
+          .from("property_tenants")
+          .select("tenant_profile_id")
+          .eq("property_id", verifiedBill.property_id)
+          .eq("status", "active")
+          .not("tenant_profile_id", "is", null);
+
+        if (tenants && tenants.length > 0) {
+          const notifications = tenants.map((tenant) =>
+            createNotification({
+              profileId: tenant.tenant_profile_id!,
+              type: "payment_verified_by_owner",
+              title: "Payment Verified",
+              message: `Your payment for ${property.property_name} has been verified by the owner`,
+              relatedBillId: verifiedBill.id,
+              relatedPropertyId: verifiedBill.property_id,
+            })
+          );
+          await Promise.allSettled(notifications);
+        }
+      } else if (input.verifier === "tenant" && approve && property.owner_profile_id) {
+        // Tenant verified payment - notify owner
+        await createNotification({
+          profileId: property.owner_profile_id,
+          type: "payment_verified_by_tenant",
+          title: "Payment Verified by Tenant",
+          message: `Tenant has verified payment for ${property.property_name}`,
+          relatedBillId: verifiedBill.id,
+          relatedPropertyId: verifiedBill.property_id,
+        });
+      }
+    }
+  } catch (notificationError) {
+    // Silently fail notifications - don't block verification
+    console.error("Failed to create verification notification:", notificationError);
+  }
+
+  return verifiedBill;
 }
 
 export async function fetchPropertyTenants(propertyId: number) {
@@ -2022,7 +2084,36 @@ export async function createBill(input: CreateBillInput) {
     .eq("id", bill.id)
     .single();
 
-  return (fullBill || bill) as BillRecord;
+  const createdBill = (fullBill || bill) as BillRecord;
+
+  // Create notification for tenant(s) about the new bill
+  try {
+    const { data: tenants } = await supabase
+      .from("property_tenants")
+      .select("tenant_profile_id")
+      .eq("property_id", input.propertyId)
+      .eq("status", "active")
+      .not("tenant_profile_id", "is", null);
+
+    if (tenants && tenants.length > 0) {
+      const notifications = tenants.map((tenant) =>
+        createNotification({
+          profileId: tenant.tenant_profile_id!,
+          type: "bill_created",
+          title: "New Bill Created",
+          message: `A new bill has been created for ${input.propertyName} for ${input.currentMonth}`,
+          relatedBillId: createdBill.id,
+          relatedPropertyId: input.propertyId,
+        })
+      );
+      await Promise.allSettled(notifications);
+    }
+  } catch (notificationError) {
+    // Silently fail notifications - don't block bill creation
+    console.error("Failed to create bill notification:", notificationError);
+  }
+
+  return createdBill;
 }
 
 // ---------------------------------------------------------------------------
@@ -2453,4 +2544,105 @@ export async function deletePropertyDocument(docId: number, url: string): Promis
 
   const { error } = await supabase.from("property_documents").delete().eq("id", docId);
   if (error) throw new Error(error.message || "Failed to delete document");
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a notification for a user
+ */
+export async function createNotification(input: {
+  profileId: string;
+  type: "bill_created" | "payment_verified_by_owner" | "payment_verified_by_tenant";
+  title: string;
+  message: string;
+  relatedBillId?: number;
+  relatedPropertyId?: number;
+}): Promise<NotificationRecord> {
+  const supabase = getSupabaseBrowserClient();
+  
+  const { data, error } = await supabase
+    .from("notifications")
+    .insert({
+      profile_id: input.profileId,
+      type: input.type,
+      title: input.title,
+      message: input.message,
+      related_bill_id: input.relatedBillId || null,
+      related_property_id: input.relatedPropertyId || null,
+      read: false,
+    })
+    .select("*")
+    .single();
+
+  if (error || !data) {
+    throw new Error(error?.message || "Failed to create notification");
+  }
+
+  return data as NotificationRecord;
+}
+
+/**
+ * Fetch unread notifications for the current user
+ */
+export async function fetchUnreadNotifications(): Promise<NotificationRecord[]> {
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  
+  if (!profileId) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("*")
+    .eq("profile_id", profileId)
+    .eq("read", false)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message || "Failed to fetch notifications");
+  }
+
+  return (data || []) as NotificationRecord[];
+}
+
+/**
+ * Mark a notification as read
+ */
+export async function markNotificationAsRead(notificationId: number): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  
+  const { error } = await supabase
+    .from("notifications")
+    .update({ read: true })
+    .eq("id", notificationId);
+
+  if (error) {
+    throw new Error(error.message || "Failed to mark notification as read");
+  }
+}
+
+/**
+ * Mark all notifications as read for the current user
+ */
+export async function markAllNotificationsAsRead(): Promise<void> {
+  const supabase = getSupabaseBrowserClient();
+  const profileId = await resolveCurrentProfileId();
+  
+  if (!profileId) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from("notifications")
+    .update({ read: true })
+    .eq("profile_id", profileId)
+    .eq("read", false);
+
+  if (error) {
+    throw new Error(error.message || "Failed to mark all notifications as read");
+  }
 }
